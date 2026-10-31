@@ -264,3 +264,16 @@ export async function rebajarTodo(d: PosDB, ctx: Contexto) {
   for (const c of ['productos', 'ventas', 'sesiones', 'movimientos']) await setMeta(d, `cursor_${c}`, null);
   await sincronizar(d, ctx);
 }
+
+/**
+ * Borra TODOS los datos guardados en este equipo y vuelve a empezar desde la nube
+ * (después de limpiar la base en Supabase, o si el equipo quedó con datos viejos).
+ * La sesión de usuario se mantiene. No se permite si hay cambios sin subir.
+ */
+export async function reiniciarEquipo(d: PosDB) {
+  const pendientes = await d.outbox.count();
+  if (pendientes > 0) throw new Error(`Hay ${pendientes} cambios de este equipo sin subir a la nube. Sincroniza primero (necesita internet).`);
+  d.close();
+  await d.delete();
+  location.reload();
+}

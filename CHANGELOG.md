@@ -1,5 +1,22 @@
 # Cambios
 
+## 1.2.0 — 2026-10-31
+
+Catálogo propio de la tienda, con varios proveedores.
+
+- Se quita la lista GP Motocycles (1.207 productos) y su botón de carga inicial: el catálogo se arma a mano con los productos que la tienda maneja de todos sus proveedores.
+- Códigos propios automáticos: RYG0001, RYG0002… (el prefijo se cambia en Ajustes → Datos del negocio). También se puede escribir el código a mano.
+- Proveedor y referencia del proveedor en cada producto; se busca por ellos al vender y en inventario. Filtro por proveedor en Productos.
+- Plantilla nueva `datos/Plantilla_catalogo_inicial.xlsx` (una hoja, un producto por fila, con stock contado). La misma plantilla vacía se descarga desde el POS.
+- Ajustes → Catálogo en Excel: importa la plantilla (crea productos, actualiza los existentes y registra el stock inicial), con resumen y errores por fila antes de aplicar. Evita duplicar productos si el archivo se sube dos veces.
+- Descargar catálogo actual en Excel con el mismo formato, para cambiar precios en bloque y volver a subirlo (STOCK CONTADO sale vacío; el stock de hoy va en una columna que no se importa).
+- Entrada de mercancía: proveedor por entrada (queda en el movimiento y como proveedor del producto), botón para crear un producto nuevo ahí mismo, proveedor y nota se mantienen para cargar una factura completa.
+- Productos: botón Editar para corregir descripción, categoría, motos, proveedor y referencia. "Familia" pasa a llamarse "Categoría".
+- Mantenimiento: "Reiniciar este equipo" borra los datos locales del PC y los vuelve a bajar de la nube (no deja hacerlo si hay cambios sin subir).
+- Corrección: después de registrar una entrada de mercancía el formulario no se limpiaba.
+- Modo demo con 22 productos de ejemplo inventados.
+- Migración 004: proveedor y referencia en productos, proveedor en movimientos. Script `supabase/borrar_datos_de_prueba.sql` para empezar de cero antes de vender.
+
 ## 1.1.0 — 2026-10-30
 
 Métodos de pago de la tienda y tasa BCV.

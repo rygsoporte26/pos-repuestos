@@ -1,11 +1,11 @@
 import type { Producto } from '../db/types';
 import { normalizar } from './util';
 
-export const textoBusqueda = (p: Pick<Producto, 'codigo' | 'descripcion' | 'familia' | 'marcaAplica'>): string =>
-  normalizar([p.codigo, p.descripcion, p.familia ?? '', p.marcaAplica ?? ''].join(' '));
+export const textoBusqueda = (p: Pick<Producto, 'codigo' | 'descripcion' | 'familia' | 'marcaAplica' | 'proveedor' | 'refProveedor'>): string =>
+  normalizar([p.codigo, p.descripcion, p.familia ?? '', p.marcaAplica ?? '', p.proveedor ?? '', p.refProveedor ?? ''].join(' '));
 
 /**
- * Busca por código, descripción, familia o moto. Todas las palabras deben aparecer
+ * Busca por código, descripción, categoría, moto, proveedor o referencia del proveedor. Todas las palabras deben aparecer
  * ("pastilla jaguar"). Código exacto primero, luego códigos que empiezan igual.
  */
 export function buscarProductos(lista: Producto[], consulta: string, limite = 40): Producto[] {

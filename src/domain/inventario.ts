@@ -1,8 +1,9 @@
 import type { PosDB } from '../db/db';
-import type { Movimiento, TipoMovimiento } from '../db/types';
+import type { Movimiento, Producto, TipoMovimiento } from '../db/types';
+import { textoBusqueda } from './buscar';
 import { ErrorNegocio, exigir, type Contexto } from './contexto';
 import { encolar } from '../sync/outbox';
-import { uuid } from './util';
+import { normalizar, round2, uuid } from './util';
 
 export const stockKey = (sedeId: string, productoId: string) => `${sedeId}|${productoId}`;
 
@@ -20,12 +21,12 @@ export async function aplicarMovimiento(d: PosDB, m: Movimiento) {
 
 export function nuevoMovimiento(
   ctx: Contexto, productoId: string, tipo: TipoMovimiento, cantidad: number,
-  extra: Partial<Pick<Movimiento, 'id' | 'costoUnitario' | 'referenciaId' | 'nota' | 'creadoEn'>> = {},
+  extra: Partial<Pick<Movimiento, 'id' | 'costoUnitario' | 'referenciaId' | 'nota' | 'proveedor' | 'creadoEn'>> = {},
 ): Movimiento {
   return {
     id: extra.id ?? uuid(), sedeId: ctx.sedeId, productoId, tipo, cantidad,
     costoUnitario: extra.costoUnitario ?? null, referenciaId: extra.referenciaId ?? null,
-    nota: extra.nota ?? null, usuarioId: ctx.usuario.id, usuarioNombre: ctx.usuario.nombre,
+    nota: extra.nota ?? null, proveedor: extra.proveedor ?? null, usuarioId: ctx.usuario.id, usuarioNombre: ctx.usuario.nombre,
     creadoEn: extra.creadoEn ?? new Date().toISOString(),
   };
 }
@@ -34,21 +35,32 @@ export async function stockDe(d: PosDB, sedeId: string, productoId: string): Pro
   return (await d.stock.get(stockKey(sedeId, productoId)))?.stock ?? 0;
 }
 
-/** Entrada de mercancía (compra). Opcionalmente actualiza el costo del producto. */
-export async function registrarEntrada(d: PosDB, ctx: Contexto, productoId: string, cantidad: number, opts: { costo?: number | null; nota?: string | null; actualizarCosto?: boolean } = {}) {
+/**
+ * Entrada de mercancía (compra). Opcionalmente actualiza el costo del producto.
+ * Si se indica el proveedor, queda en el movimiento y como proveedor del producto.
+ */
+export async function registrarEntrada(d: PosDB, ctx: Contexto, productoId: string, cantidad: number, opts: { costo?: number | null; nota?: string | null; proveedor?: string | null; actualizarCosto?: boolean } = {}): Promise<Movimiento> {
   exigir(ctx, 'mover_inventario');
   if (!Number.isInteger(cantidad) || cantidad <= 0) throw new ErrorNegocio('La cantidad debe ser un entero mayor que 0');
-  await d.transaction('rw', [d.movimientos, d.stock, d.productos, d.outbox], async () => {
+  return d.transaction('rw', [d.movimientos, d.stock, d.productos, d.outbox], async () => {
     const p = await d.productos.get(productoId);
     if (!p) throw new ErrorNegocio('Producto no encontrado');
-    const m = nuevoMovimiento(ctx, productoId, 'compra', cantidad, { costoUnitario: opts.costo ?? p.costo, nota: opts.nota ?? null });
+    if (opts.costo !== null && opts.costo !== undefined && (!Number.isFinite(opts.costo) || opts.costo < 0)) throw new ErrorNegocio('El costo no puede ser negativo');
+    const proveedor = opts.proveedor?.trim() ? normalizar(opts.proveedor) : null;
+    const m = nuevoMovimiento(ctx, productoId, 'compra', cantidad, { costoUnitario: opts.costo ?? p.costo, nota: opts.nota?.trim() || null, proveedor });
     await aplicarMovimiento(d, m);
     await encolar(d, 'movimiento', m.id, m);
-    if (opts.actualizarCosto && opts.costo !== null && opts.costo !== undefined && opts.costo !== p.costo) {
-      const cambio = { ...p, costo: opts.costo, actualizadoEn: new Date().toISOString() };
+    const cambiaCosto = opts.actualizarCosto && opts.costo !== null && opts.costo !== undefined && round2(opts.costo) !== p.costo;
+    const cambiaProv = proveedor !== null && proveedor !== (p.proveedor ?? null);
+    if (cambiaCosto || cambiaProv) {
+      const cambio: Producto = { ...p, actualizadoEn: new Date().toISOString() };
+      if (cambiaCosto) cambio.costo = round2(opts.costo!);
+      if (cambiaProv) cambio.proveedor = proveedor;
+      cambio.busqueda = textoBusqueda(cambio);
       await d.productos.put(cambio);
       await encolar(d, 'producto', p.id, cambio);
     }
+    return m;
   });
 }
 

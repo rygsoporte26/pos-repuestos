@@ -11,7 +11,7 @@ export const productoANube = (p: Producto): Fila => ({
   id: p.id, codigo: p.codigo, descripcion: p.descripcion, familia: p.familia, marca_aplica: p.marcaAplica,
   presentacion: p.presentacion, unidades_bulto: p.unidadesBulto, unidad_compra: p.unidadCompra, costo: p.costo,
   precio_detal: p.precioDetal, precio_mayor: p.precioMayor, cant_min_mayor: p.cantMinMayor,
-  stock_minimo: p.stockMinimo, activo: p.activo,
+  stock_minimo: p.stockMinimo, proveedor: p.proveedor ?? null, ref_proveedor: p.refProveedor ?? null, activo: p.activo,
 });
 
 export function productoDeNube(r: Fila): Producto {
@@ -21,6 +21,7 @@ export function productoDeNube(r: Fila): Producto {
     presentacion: (r.presentacion as string) ?? null, unidadesBulto: n(r.unidades_bulto),
     unidadCompra: (r.unidad_compra as string) ?? null, costo: Number(r.costo), precioDetal: n(r.precio_detal),
     precioMayor: n(r.precio_mayor), cantMinMayor: n(r.cant_min_mayor), stockMinimo: Number(r.stock_minimo ?? 0),
+    proveedor: (r.proveedor as string) ?? null, refProveedor: (r.ref_proveedor as string) ?? null,
     activo: Boolean(r.activo), actualizadoEn: r.actualizado_en as string, busqueda: '',
   };
   p.busqueda = textoBusqueda(p);
@@ -76,12 +77,12 @@ export const sesionDeNube = (r: Fila): SesionCaja => ({
 
 export const movimientoANube = (m: Movimiento): Fila => ({
   id: m.id, sede_id: m.sedeId, producto_id: m.productoId, tipo: m.tipo, cantidad: m.cantidad, costo_unitario: m.costoUnitario,
-  nota: m.nota, usuario_id: m.usuarioId, creado_en: m.creadoEn,
+  nota: m.nota, proveedor: m.proveedor ?? null, usuario_id: m.usuarioId, creado_en: m.creadoEn,
 });
 
 export const movimientoDeNube = (r: Fila): Movimiento => ({
   id: r.id as string, sedeId: r.sede_id as string, productoId: r.producto_id as string, tipo: r.tipo as Movimiento['tipo'],
   cantidad: Number(r.cantidad), costoUnitario: n(r.costo_unitario), referenciaId: (r.referencia_id as string) ?? null,
-  nota: (r.nota as string) ?? null, usuarioId: (r.usuario_id as string) ?? '', usuarioNombre: (r.usuario_nombre as string) ?? '',
+  nota: (r.nota as string) ?? null, proveedor: (r.proveedor as string) ?? null, usuarioId: (r.usuario_id as string) ?? '', usuarioNombre: (r.usuario_nombre as string) ?? '',
   creadoEn: r.creado_en as string,
 });

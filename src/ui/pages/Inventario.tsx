@@ -7,6 +7,7 @@ import { buscarProductos } from '../../domain/buscar';
 import { fechaHora, normalizar, parseEntero, parseNum, usd } from '../../domain/util';
 import { Campo, useAccion, useApp, useToast } from '../components/ui';
 import { claseStock, useProductos, useStock } from '../hooks';
+import { FormProducto } from './Productos';
 
 type Tab = 'conteo' | 'entrada' | 'movimientos';
 
@@ -42,11 +43,11 @@ function Conteo() {
   }, [productos, familia, q]);
   return (
     <div className="panel">
-      <div className="muted small">Cuenta estante por estante: elige una familia, escribe las piezas que hay y pulsa Enter. La primera vez queda como inventario inicial; después, como ajuste por la diferencia. Cuenta en piezas, no en bultos.</div>
+      <div className="muted small">Cuenta estante por estante: elige una categoría, escribe las piezas que hay y pulsa Enter. La primera vez queda como inventario inicial; después, como ajuste por la diferencia. Cuenta en piezas, no en bultos.</div>
       <div className="row">
-        <Campo label="Familia">
+        <Campo label="Categoría">
           <select id="conteo-familia" className="input" value={familia} onChange={(e) => setFamilia(e.target.value)}>
-            <option value="">Elegir familia…</option>
+            <option value="">Elegir categoría…</option>
             {familias.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         </Campo>
@@ -55,7 +56,7 @@ function Conteo() {
       {lista.length > 0 && (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Código</th><th className="desc">Descripción</th><th>Presentación</th><th className="num">En sistema</th><th className="num">Contado (pzs)</th><th></th></tr></thead>
+            <thead><tr><th>Código</th><th className="desc">Descripción</th><th>Proveedor</th><th className="num">En sistema</th><th className="num">Contado (pzs)</th><th></th></tr></thead>
             <tbody>{lista.map((p) => <FilaConteo key={p.id} p={p} stock={stock.get(p.id) ?? 0} />)}</tbody>
           </table>
         </div>
@@ -83,7 +84,7 @@ function FilaConteo({ p, stock }: { p: Producto; stock: number }) {
     <tr>
       <td className="mono">{p.codigo}</td>
       <td className="desc">{p.descripcion}<div className="muted small">{p.marcaAplica}</div></td>
-      <td className="mono small">{p.presentacion}</td>
+      <td className="small">{p.proveedor}</td>
       <td className={`num ${claseStock(stock, p.stockMinimo)}`}>{stock}</td>
       <td className="num">
         <input className={`input cell qty${v && (n === null || n < 0) ? ' invalid' : ''}`} aria-label={`Contado ${p.codigo}`} inputMode="numeric"
@@ -105,22 +106,31 @@ function Entrada() {
   const [piezas, setPiezas] = useState('');
   const [costo, setCosto] = useState('');
   const [nota, setNota] = useState('');
+  const [proveedor, setProveedor] = useState('');
+  const [crear, setCrear] = useState(false);
+  const proveedores = useMemo(() => [...new Set(productos.map((x) => x.proveedor).filter(Boolean) as string[])].sort(), [productos]);
   const res = useMemo(() => buscarProductos(productos, q, 12), [productos, q]);
+  const elegir = (x: Producto) => { setP(x); setCosto(x.costo ? String(x.costo).replace('.', ',') : ''); setProveedor((v) => v || x.proveedor || ''); };
   const total = (parseEntero(bultos) ?? 0) * (p?.unidadesBulto ?? 0) + (parseEntero(piezas) ?? 0);
   const nCosto = parseNum(costo);
 
   return (
     <div className="panel" style={{ maxWidth: 760 }}>
-      <div className="muted small">Registra la mercancía que llega del importador. Se suma al stock de esta sede.</div>
+      <div className="muted small">Registra la mercancía que llega de cualquier proveedor. Se suma al stock de esta sede. Si el producto no existe todavía, créalo aquí mismo.</div>
       {!p ? (
         <>
-          <Campo label="Producto"><input id="entrada-buscar" className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Código, nombre o moto" autoFocus /></Campo>
+          <div className="row" style={{ alignItems: 'flex-end' }}>
+            <Campo label="Producto"><input id="entrada-buscar" className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Código, nombre, moto o ref. del proveedor" autoFocus /></Campo>
+            <button type="button" className="btn" onClick={() => setCrear(true)}>Producto nuevo</button>
+          </div>
+          {q.trim() && res.length === 0 && <div className="muted">No existe. Si es un producto nuevo, créalo con “Producto nuevo”.</div>}
+          {crear && <FormProducto onClose={() => setCrear(false)} onCreado={elegir} />}
           {res.length > 0 && (
             <div className="results">
               {res.map((x) => (
-                <button key={x.id} className="result" onClick={() => { setP(x); setCosto(String(x.costo).replace('.', ',')); }}>
+                <button key={x.id} className="result" onClick={() => elegir(x)}>
                   <span className="code">{x.codigo}</span><span className="name">{x.descripcion}</span>
-                  <span className="prices">{usd(x.costo)}</span><span className="meta">{x.presentacion ?? ''} · Stock {stock.get(x.id) ?? 0}</span>
+                  <span className="prices">{usd(x.costo)}</span><span className="meta">{x.proveedor ?? 'sin proveedor'} · Stock {stock.get(x.id) ?? 0}</span>
                 </button>
               ))}
             </div>
@@ -129,11 +139,12 @@ function Entrada() {
       ) : (
         <form style={{ display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={async (e) => {
           e.preventDefault();
-          const ok = await accion(() => registrarEntrada(db, ctx, p.id, total, { costo: nCosto, nota, actualizarCosto: true }), `Entrada registrada: +${total} piezas`);
-          if (ok !== undefined) { setP(null); setQ(''); setBultos(''); setPiezas(''); setNota(''); }
+          const ok = await accion(() => registrarEntrada(db, ctx, p.id, total, { costo: nCosto, nota, proveedor, actualizarCosto: true }), `Entrada registrada: +${total} piezas`);
+          // El proveedor y la nota (factura) se mantienen para seguir cargando la misma factura.
+          if (ok !== undefined) { setP(null); setQ(''); setBultos(''); setPiezas(''); }
         }}>
           <div className="row center">
-            <div><span className="mono">{p.codigo}</span> · <strong>{p.descripcion}</strong><div className="muted small">Stock actual {stock.get(p.id) ?? 0} · {p.presentacion ?? 'sin presentación'}</div></div>
+            <div><span className="mono">{p.codigo}</span> · <strong>{p.descripcion}</strong><div className="muted small">Stock actual {stock.get(p.id) ?? 0} · {p.marcaAplica ?? 'sin motos'}{p.refProveedor ? ` · ref. ${p.refProveedor}` : ''}</div></div>
             <span className="spacer" /><button type="button" className="btn ghost" onClick={() => setP(null)}>Cambiar producto</button>
           </div>
           <div className="row">
@@ -141,7 +152,14 @@ function Entrada() {
             <Campo label="Piezas sueltas"><input id="entrada-piezas" className="input" inputMode="numeric" value={piezas} onChange={(e) => setPiezas(e.target.value)} /></Campo>
             <Campo label="Costo por pieza USD"><input id="entrada-costo" className="input" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} /></Campo>
           </div>
-          <Campo label="Nota (ej. factura del importador)"><input id="entrada-nota" className="input" value={nota} onChange={(e) => setNota(e.target.value)} /></Campo>
+          <div className="row">
+            <Campo label="Proveedor">
+              <input id="entrada-proveedor" className="input" list="entrada-proveedores" value={proveedor} onChange={(e) => setProveedor(e.target.value)} />
+              <datalist id="entrada-proveedores">{proveedores.map((x) => <option key={x} value={x} />)}</datalist>
+            </Campo>
+            <Campo label="Nota (ej. número de factura)"><input id="entrada-nota" className="input" value={nota} onChange={(e) => setNota(e.target.value)} /></Campo>
+          </div>
+          <div className="muted small">El proveedor y la nota se quedan para el siguiente producto de la misma factura.{(proveedor || nota) && <> <button type="button" className="btn ghost small" onClick={() => { setProveedor(p.proveedor ?? ''); setNota(''); }}>Otra factura</button></>}</div>
           {nCosto !== null && nCosto !== p.costo && <div className="alert warn">El costo cambia de {usd(p.costo)} a {usd(nCosto)}. Revisa si hay que ajustar los precios de venta.</div>}
           <div className="row center"><strong>Total a sumar: {total} piezas</strong><span className="spacer" /><button className="btn primary" type="submit" disabled={total <= 0}>Registrar entrada</button></div>
         </form>
@@ -173,7 +191,7 @@ function Movimientos() {
                   <td className="small">{fechaHora(m.creadoEn)}</td><td><span className="badge">{NOMBRE_TIPO[m.tipo]}</span></td>
                   <td className="mono">{p?.codigo}</td><td className="desc">{p?.descripcion}</td>
                   <td className="num" style={{ color: m.cantidad < 0 ? 'var(--bad)' : 'var(--good)' }}>{m.cantidad > 0 ? '+' : ''}{m.cantidad}</td>
-                  <td className="small">{m.usuarioNombre}</td><td className="small">{m.nota}</td>
+                  <td className="small">{m.usuarioNombre}</td><td className="small">{[m.proveedor, m.nota].filter(Boolean).join(' · ')}</td>
                 </tr>
               );
             })}

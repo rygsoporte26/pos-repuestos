@@ -5,14 +5,13 @@ import { db, getMeta, setMeta } from '../../db/db';
 import type { Negocio, Rol, Usuario } from '../../db/types';
 import { exigir, puede } from '../../domain/contexto';
 import { recalcularStock } from '../../domain/inventario';
-import { aplicarPlantilla, analizarPlantilla, leerHoja, type PlanImportacion } from '../../domain/importar';
-import { csvProductos, csvVentas, descargar } from '../../domain/respaldo';
+import { aplicarPlantilla, analizarPlantilla, leerHoja, type ErrorFila, type PlanImportacion } from '../../domain/importar';
+import { csvProductos, csvVentas, descargar, descargarArchivo, xlsxCatalogo } from '../../domain/respaldo';
 import { diaLocal, fechaHora, num2, parseNum, uuid } from '../../domain/util';
 import { consultarTasaBcv, guardarTasa, tasaDeHoy } from '../../domain/tasa';
 import { useTasa } from '../hooks';
 import { MODO_NUBE, nube } from '../../sync/nube';
-import { descartarCambio, leerEstado, nombreTipo, rebajarTodo, sincronizar } from '../../sync/motor';
-import { productosEnNube, subirCatalogoInicial } from '../../sync/catalogo';
+import { descartarCambio, leerEstado, nombreTipo, rebajarTodo, reiniciarEquipo, sincronizar } from '../../sync/motor';
 import { Campo, useAccion, useApp, useToast } from '../components/ui';
 
 const ROLES: Record<Rol, string> = { vendedor: 'Vendedor', admin: 'Administrador', supervisor: 'Supervisor' };
@@ -25,8 +24,7 @@ export function Ajustes({ onCambio }: { onCambio: () => void }) {
       <h1>Ajustes</h1>
       {admin && <TasaDelDia />}
       {MODO_NUBE && <Sincronizacion />}
-      {MODO_NUBE && puede(ctx.usuario.rol, 'editar_productos') && <CargaInicial />}
-      {puede(ctx.usuario.rol, 'editar_productos') && <ImportarPlantilla />}
+      {puede(ctx.usuario.rol, 'editar_productos') && <CatalogoExcel />}
       {admin && <Respaldo />}
       {admin && <DatosNegocio onCambio={onCambio} />}
       {admin && puede(ctx.usuario.rol, 'caja') && <EsteEquipo onCambio={onCambio} />}
@@ -69,65 +67,62 @@ function Sincronizacion() {
   );
 }
 
-function CargaInicial() {
-  const { ctx } = useApp();
-  const accion = useAccion();
-  const locales = useLiveQuery(() => db.productos.count(), []) ?? 0;
-  const [enNube, setEnNube] = useState<number | null>(null);
-  if (locales > 0 && enNube === null) return null;
-  return (
-    <section className="panel" style={{ maxWidth: 760 }}>
-      <h2>Catálogo inicial</h2>
-      <div className="muted small">Se hace una sola vez, en la instalación: sube a la nube los 1.207 productos de la lista GP Motocycles (código, descripción, familia, moto y costo, sin precios ni stock).</div>
-      <div className="row">
-        <button className="btn" onClick={() => accion(async () => setEnNube(await productosEnNube()))}>Revisar la nube</button>
-        {enNube !== null && <span className="muted">{enNube === 0 ? 'La nube no tiene productos.' : `La nube ya tiene ${enNube} productos: no hace falta la carga inicial.`}</span>}
-        {enNube === 0 && <button className="btn primary" onClick={() => accion(async () => { const n = await subirCatalogoInicial(db, ctx); setEnNube(n); }, 'Catálogo cargado: subiendo a la nube')}>Cargar catálogo GP</button>}
-      </div>
-    </section>
-  );
-}
-
-function ImportarPlantilla() {
+function CatalogoExcel() {
   const { ctx } = useApp();
   const avisar = useToast();
+  const accion = useAccion();
   const [plan, setPlan] = useState<PlanImportacion | null>(null);
+  const [archivo, setArchivo] = useState('');
   const [avance, setAvance] = useState<number | null>(null);
-  const [errores, setErrores] = useState<{ codigo: string; mensaje: string }[]>([]);
+  const [errores, setErrores] = useState<ErrorFila[]>([]);
+  const hoy = diaLocal();
   async function leer(f: File) {
+    setPlan(null); setErrores([]); setArchivo(f.name);
     try {
-      const conteo = await readXlsxFile(f, { sheet: 'Conteo' });
-      let nuevos: unknown[][] = [];
-      try { nuevos = await readXlsxFile(f, { sheet: 'Nuevos productos' }); } catch { /* hoja opcional */ }
-      setPlan(await analizarPlantilla(db, [...leerHoja(conteo), ...leerHoja(nuevos, true)]));
-      setErrores([]);
+      let filas: unknown[][];
+      try { filas = await readXlsxFile(f, { sheet: 'Catalogo' }); } catch { filas = await readXlsxFile(f); }
+      setPlan(await analizarPlantilla(db, leerHoja(filas)));
     } catch (e) {
-      avisar(`No se pudo leer el archivo. Usa la plantilla "Plantilla_conteo_y_precios.xlsx" (hoja Conteo). ${e instanceof Error ? e.message : ''}`, true);
+      avisar(`No se pudo leer el archivo. Usa la plantilla del catálogo (hoja "Catalogo"). ${e instanceof Error ? e.message : ''}`, true);
     }
   }
+  const lista = (e: ErrorFila[]) => e.slice(0, 30).map((x) => <li key={`${x.fila}-${x.codigo}`}>Fila {x.fila} · {x.codigo}: {x.mensaje}</li>);
   return (
     <section className="panel" style={{ maxWidth: 760 }}>
-      <h2>Importar plantilla de precios y conteo</h2>
-      <div className="muted small">Sube la plantilla Excel llena (hoja “Conteo” y opcionalmente “Nuevos productos”). Se actualizan los precios de las filas que tengan precio detal y se registra el stock contado como conteo físico.</div>
-      <input id="archivo-plantilla" type="file" accept=".xlsx" onChange={(e) => e.target.files?.[0] && leer(e.target.files[0])} />
+      <h2>Catálogo en Excel</h2>
+      <div className="muted small">
+        Para armar el catálogo de una vez: descarga la plantilla, llénala con un producto por fila (código propio, descripción, motos, proveedor, precios y stock contado) y súbela aquí.
+        Después puedes descargar el catálogo actual, cambiar precios en Excel y volver a subirlo: las celdas vacías no cambian nada.
+      </div>
+      <div className="row">
+        <button className="btn" onClick={() => accion(async () => descargarArchivo('Plantilla_catalogo_inicial.xlsx', await xlsxCatalogo(db, ctx, true)))}>Plantilla vacía</button>
+        <button className="btn" onClick={() => accion(async () => descargarArchivo(`catalogo-${hoy}.xlsx`, await xlsxCatalogo(db, ctx)))}>Descargar catálogo actual</button>
+      </div>
+      <Campo label="Subir plantilla llena (.xlsx)">
+        <input id="archivo-plantilla" type="file" accept=".xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) leer(f); }} />
+      </Campo>
       {plan && (
         <div className="alert info" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span><strong>{plan.precios}</strong> productos con precios nuevos · <strong>{plan.conteos}</strong> con stock contado · <strong>{plan.nuevos}</strong> productos nuevos</span>
-          {plan.noEncontrados.length > 0 && <span>{plan.noEncontrados.length} códigos no existen en el catálogo: {plan.noEncontrados.slice(0, 10).join(', ')}{plan.noEncontrados.length > 10 ? '…' : ''}</span>}
-          {plan.errores.length > 0 && <span>{plan.errores.length} filas con errores: {plan.errores.slice(0, 5).map((x) => `${x.codigo} (${x.mensaje})`).join('; ')}</span>}
+          <strong>{archivo}</strong>
+          <span><strong>{plan.nuevos}</strong> productos nuevos · <strong>{plan.actualizados}</strong> productos con cambios · <strong>{plan.conteos}</strong> con stock contado</span>
+          {plan.sinPrecio > 0 && <span>{plan.sinPrecio} productos nuevos no tienen precio detal: se crean, pero no se pueden vender hasta ponerles precio.</span>}
+          {plan.conteos > 0 && <span className="small">El stock contado REEMPLAZA el stock actual de esos productos en esta sede ({ctx.sedeCodigo}).</span>}
+          {plan.errores.length > 0 && (
+            <div className="alert bad"><strong>{plan.errores.length} filas con errores (no se aplican):</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{lista(plan.errores)}</ul>
+              {plan.errores.length > 30 && <span className="small">…y {plan.errores.length - 30} más. Corrige el archivo y vuelve a subirlo.</span>}</div>
+          )}
           {avance === null
-            ? <div><button className="btn primary" disabled={!plan.filas.length} onClick={async () => {
+            ? <div className="row"><button className="btn primary" disabled={!plan.filas.length} onClick={async () => {
                 setAvance(0);
-                const err = await aplicarPlantilla(db, ctx, plan, setAvance).catch((e) => [{ codigo: '-', mensaje: String(e) }]);
+                const err = await aplicarPlantilla(db, ctx, plan, setAvance).catch((e) => [{ fila: 0, codigo: '-', mensaje: String(e) }]);
                 setErrores(err); setAvance(null); setPlan(null);
-                avisar(err.length ? `Importación terminada con ${err.length} errores` : 'Importación terminada', err.length > 0);
-              }}>Aplicar {plan.filas.length} filas</button></div>
+                avisar(err.length ? `Importación terminada con ${err.length} errores` : `Importación terminada: ${plan.filas.length} filas`, err.length > 0);
+              }}>Aplicar {plan.filas.length} filas</button>
+              <button className="btn ghost" onClick={() => setPlan(null)}>Cancelar</button></div>
             : <span>Aplicando… {avance} de {plan.filas.length}</span>}
         </div>
       )}
-      {errores.length > 0 && (
-        <div className="alert bad">Filas no aplicadas: {errores.slice(0, 20).map((x) => `${x.codigo}: ${x.mensaje}`).join(' · ')}</div>
-      )}
+      {errores.length > 0 && <div className="alert bad">Filas no aplicadas:<ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{lista(errores)}</ul></div>}
     </section>
   );
 }
@@ -175,6 +170,10 @@ function DatosNegocio({ onCambio }: { onCambio: () => void }) {
       </div>
       <Campo label="Dirección"><input id="neg-dir" className="input" value={n.direccion} onChange={(e) => setN({ ...n, direccion: e.target.value })} /></Campo>
       <Campo label="Mensaje al pie del ticket"><input id="neg-msg" className="input" value={n.mensajeTicket} onChange={(e) => setN({ ...n, mensajeTicket: e.target.value })} /></Campo>
+      <Campo label="Prefijo de los códigos de producto (ej. RYG → RYG0001)">
+        <input id="neg-prefijo" className="input" style={{ maxWidth: 160 }} value={n.prefijoCodigo ?? 'RYG'} maxLength={6}
+          onChange={(e) => setN({ ...n, prefijoCodigo: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })} />
+      </Campo>
       <div><button className="btn primary" type="submit">Guardar</button></div>
     </form>
   );
@@ -297,16 +296,25 @@ function Mantenimiento() {
   const { ctx } = useApp();
   const accion = useAccion();
   const [borrar, setBorrar] = useState(false);
+  const [reiniciar, setReiniciar] = useState(false);
   return (
     <section className="panel" style={{ maxWidth: 760 }}>
       <h2>Mantenimiento</h2>
+      {MODO_NUBE && <div className="muted small">“Reiniciar este equipo” borra los datos guardados en este PC y los vuelve a bajar de la nube. Úsalo después de limpiar la base en Supabase o si este equipo muestra datos que ya no existen.</div>}
       <div className="row">
         {MODO_NUBE
           ? <button className="btn" onClick={() => accion(() => rebajarTodo(db, ctx), 'Datos actualizados desde la nube')}>Volver a bajar todo de la nube</button>
           : <button className="btn" onClick={() => accion(() => recalcularStock(db), 'Stock recalculado desde los movimientos')}>Recalcular stock</button>}
+        {MODO_NUBE && (!reiniciar ? <button className="btn danger" onClick={() => setReiniciar(true)}>Reiniciar este equipo</button> : (
+          <div className="alert bad row center">
+            <span>Se borran los datos de este PC y se descargan otra vez de la nube. No se pierde nada que ya esté en la nube.</span>
+            <button className="btn" onClick={() => setReiniciar(false)}>Cancelar</button>
+            <button className="btn danger" onClick={() => accion(() => reiniciarEquipo(db))}>Sí, reiniciar</button>
+          </div>
+        ))}
         {!MODO_NUBE && (!borrar ? <button className="btn danger" onClick={() => setBorrar(true)}>Borrar datos de la demo</button> : (
           <div className="alert bad row center">
-            <span>Se borran ventas, cajas, inventario y precios de este navegador y se recarga el catálogo.</span>
+            <span>Se borran ventas, cajas, inventario y precios de este navegador y se recargan los productos de ejemplo.</span>
             <button className="btn" onClick={() => setBorrar(false)}>Cancelar</button>
             <button className="btn danger" onClick={async () => { await db.delete(); try { localStorage.clear(); } catch { /* sin almacenamiento */ } location.reload(); }}>Sí, borrar todo</button>
           </div>

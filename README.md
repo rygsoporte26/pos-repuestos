@@ -5,25 +5,28 @@ caja con arqueo y panel para el supervisor. Funciona sin internet en la tienda.
 
 ## Estado
 
-**Versión 1.1.0:** fase 1 completa más métodos de pago (efectivo Bs y $, punto de venta, Biopago,
+**Versión 1.2.0:** catálogo propio de la tienda con varios proveedores y códigos RYG0001…, plantilla Excel
+para cargar catálogo y stock inicial de una vez, métodos de pago (efectivo Bs y $, punto de venta, Biopago,
 pago móvil, Binance), pago mixto, vuelto y tasa BCV del día. Login con Supabase, venta sin internet
-con sincronización automática, catálogo GP, importación Excel, usuarios, respaldo CSV.
+con sincronización automática, usuarios, respaldo.
 La guía de puesta en marcha paso a paso está en el documento "POS Repuestos — Guía de implementación".
 
 ## Instalación en la nube (resumen)
 
-1. Supabase → SQL Editor: ejecutar en orden `001_esquema.sql`, `002_sincronizacion.sql` y `003_metodos_pago.sql` (carpeta `supabase/migrations/`).
+1. Supabase → SQL Editor: ejecutar en orden `001_esquema.sql`, `002_sincronizacion.sql`, `003_metodos_pago.sql` y `004_proveedores.sql` (carpeta `supabase/migrations/`).
 2. Crear el usuario del supervisor en Authentication y ejecutar `supabase/primer_usuario.sql` con su correo.
 3. Cloudflare Pages conectado a este repositorio: build `npm run build`, salida `dist`,
    variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` y `NODE_VERSION=22`.
-4. Entrar como supervisor, activar usuarios; el administrador carga el catálogo y la tasa BCV en Ajustes.
+4. Entrar como supervisor, activar usuarios; el administrador carga la tasa BCV y sube la plantilla del catálogo en Ajustes → Catálogo en Excel.
+
+Para borrar productos, inventario y ventas de prueba antes de arrancar: `supabase/borrar_datos_de_prueba.sql` y luego, en cada PC, Ajustes → Mantenimiento → Reiniciar este equipo.
 
 ## Cómo correrlo en tu PC
 
 ```bash
 npm install
 npm run dev        # abre http://localhost:5173
-npm test           # pruebas de precios, ventas, caja, inventario e importación Excel
+npm test           # pruebas de precios, ventas, caja, inventario, pagos e importación Excel
 npm run build      # app instalable para Cloudflare Pages (carpeta dist)
 npm run build:demo # un solo HTML autocontenido (carpeta dist-demo)
 ```
@@ -38,10 +41,10 @@ Sin variables de entorno la app arranca en **modo demo**. Para producción, copi
 | --- | --- |
 | `src/domain/` | Reglas del negocio sin pantallas: precios detal/mayor, ventas, pagos y tasa (`pagos.ts`, `tasa.ts`), caja, inventario, productos. Con pruebas `*.test.ts`. |
 | `src/db/` | Base local (Dexie/IndexedDB), tipos y carga inicial del catálogo. |
-| `src/sync/` | Login (`nube.ts`), cola de cambios (`outbox.ts`), sincronización (`motor.ts`), conversión de datos (`mapeo.ts`), carga inicial (`catalogo.ts`). |
+| `src/sync/` | Login (`nube.ts`), cola de cambios (`outbox.ts`), sincronización (`motor.ts`), conversión de datos (`mapeo.ts`). |
 | `src/ui/` | Pantallas (`pages/`) y componentes. |
-| `src/data/catalogo-gp.json` | Catálogo del importador (1.207 productos). Se regenera con `scripts/catalogo.py`. |
-| `datos/` | Plantilla Excel de conteo y precios. |
+| `src/data/demo.ts` | Productos de ejemplo, solo para el modo demo. |
+| `datos/` | Plantilla Excel del catálogo inicial. Se regenera con `python3 scripts/plantilla.py` (sus títulos deben coincidir con `COLUMNAS_PLANTILLA` en `src/domain/importar.ts`). |
 | `supabase/migrations/` | Esquema de la base en la nube. Cada cambio = un archivo nuevo numerado; nunca editar uno ya aplicado. |
 
 ## Reglas para cambios

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { db } from '../../db/db';
 import type { Producto } from '../../db/types';
-import { crearProducto, guardarProducto } from '../../domain/productos';
+import { crearProducto, guardarProducto, siguienteCodigo } from '../../domain/productos';
 import { ganancia, revisarPrecios } from '../../domain/precios';
 import { normalizar, parseEntero, parseNum } from '../../domain/util';
 import { Campo, Modal, useAccion, useApp, useToast } from '../components/ui';
@@ -16,11 +16,14 @@ export function Productos() {
   const stock = useStock(ctx.sedeId);
   const [q, setQ] = useState('');
   const [familia, setFamilia] = useState('');
-  const [filtro, setFiltro] = useState<Filtro>('sin_precio');
+  const [proveedor, setProveedor] = useState('');
+  const [filtro, setFiltro] = useState<Filtro>('todos');
   const [pagina, setPagina] = useState(0);
   const [nuevo, setNuevo] = useState(false);
+  const [editar, setEditar] = useState<Producto | null>(null);
 
   const familias = useMemo(() => [...new Set(productos.map((p) => p.familia).filter(Boolean) as string[])].sort(), [productos]);
+  const proveedores = useMemo(() => [...new Set(productos.map((p) => p.proveedor).filter(Boolean) as string[])].sort(), [productos]);
   const conPrecio = productos.filter((p) => p.activo && p.precioDetal !== null).length;
   const activos = productos.filter((p) => p.activo).length;
 
@@ -32,9 +35,10 @@ export function Productos() {
       .filter((p) => filtro !== 'con_precio' || p.precioDetal !== null)
       .filter((p) => filtro !== 'sin_mayor' || (p.precioDetal !== null && p.precioMayor === null))
       .filter((p) => !familia || p.familia === familia)
+      .filter((p) => !proveedor || p.proveedor === proveedor)
       .filter((p) => palabras.every((w) => p.busqueda.includes(w)))
-      .sort((a, b) => (a.familia ?? '').localeCompare(b.familia ?? '') || a.descripcion.localeCompare(b.descripcion));
-  }, [productos, q, familia, filtro]);
+      .sort((a, b) => a.codigo.localeCompare(b.codigo));
+  }, [productos, q, familia, proveedor, filtro]);
   const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
   const pag = Math.min(pagina, paginas - 1);
   const visibles = lista.slice(pag * POR_PAGINA, pag * POR_PAGINA + POR_PAGINA);
@@ -51,13 +55,20 @@ export function Productos() {
           <strong>{conPrecio} de {activos} productos con precio</strong>
           <div className="bar-track" style={{ flex: 1, minWidth: 120 }}><div className="bar" style={{ width: `${activos ? (conPrecio / activos) * 100 : 0}%`, background: 'var(--good)' }} /></div>
         </div>
-        <div className="muted small">Escribe los precios en USD por pieza y pulsa Enter o “Guardar”. El precio mayor se aplica solo cuando el cliente lleva la cantidad mínima o más.</div>
+        <div className="muted small">Escribe los precios en USD por pieza y pulsa Enter o “Guardar”. El precio mayor se aplica solo cuando el cliente lleva la cantidad mínima o más. Para corregir descripción, motos o proveedor usa “Editar”.</div>
+        {productos.length === 0 && <div className="alert info">Todavía no hay productos. Créalos con “Nuevo producto” o súbelos todos de una vez desde Excel en Ajustes → Catálogo en Excel.</div>}
         <div className="row">
-          <Campo label="Buscar"><input id="buscar-prod" className="input" value={q} onChange={(e) => { setQ(e.target.value); setPagina(0); }} placeholder="Código, nombre o moto" /></Campo>
-          <Campo label="Familia">
+          <Campo label="Buscar"><input id="buscar-prod" className="input" value={q} onChange={(e) => { setQ(e.target.value); setPagina(0); }} placeholder="Código, nombre, moto o proveedor" /></Campo>
+          <Campo label="Categoría">
             <select id="familia" className="input" value={familia} onChange={(e) => { setFamilia(e.target.value); setPagina(0); }}>
               <option value="">Todas ({familias.length})</option>
               {familias.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Proveedor">
+            <select id="proveedor" className="input" value={proveedor} onChange={(e) => { setProveedor(e.target.value); setPagina(0); }}>
+              <option value="">Todos ({proveedores.length})</option>
+              {proveedores.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </Campo>
           <Campo label="Mostrar">
@@ -85,13 +96,14 @@ export function Productos() {
               </tr>
             </thead>
             <tbody>
-              {visibles.map((p) => <FilaProducto key={p.id} p={p} stock={stock.get(p.id) ?? 0} />)}
+              {visibles.map((p) => <FilaProducto key={p.id} p={p} stock={stock.get(p.id) ?? 0} onEditar={() => setEditar(p)} />)}
             </tbody>
           </table>
         </div>
         {visibles.length === 0 && <div className="muted">No hay productos con este filtro.</div>}
       </div>
-      {nuevo && <NuevoProducto familias={familias} onClose={() => setNuevo(false)} />}
+      {nuevo && <FormProducto onClose={() => setNuevo(false)} />}
+      {editar && <FormProducto producto={editar} onClose={() => setEditar(null)} />}
     </>
   );
 }
@@ -99,7 +111,7 @@ export function Productos() {
 const s = (n: number | null) => (n === null ? '' : n.toFixed(2).replace('.', ','));
 const ent = (n: number | null) => (n === null ? '' : String(n));
 
-function FilaProducto({ p, stock }: { p: Producto; stock: number }) {
+function FilaProducto({ p, stock, onEditar }: { p: Producto; stock: number; onEditar: () => void }) {
   const { ctx } = useApp();
   const avisar = useToast();
   const accion = useAccion();
@@ -136,7 +148,7 @@ function FilaProducto({ p, stock }: { p: Producto; stock: number }) {
       <td className="mono">{p.codigo}</td>
       <td className="desc">
         <div>{p.descripcion}</div>
-        <div className="muted small">{p.marcaAplica ?? '—'} · {p.familia ?? ''}{p.presentacion ? ` · ${p.presentacion}` : ''}</div>
+        <div className="muted small">{p.marcaAplica ?? '—'} · {p.familia ?? 'sin categoría'}{p.proveedor ? ` · ${p.proveedor}${p.refProveedor ? ` (${p.refProveedor})` : ''}` : ''}</div>
         {bloquea && <div className="small" style={{ color: 'var(--bad)' }}>{bloquea.mensaje}</div>}
         {!bloquea && problemas.length > 0 && <div className="small" style={{ color: 'var(--warn)' }}>{problemas.map((x) => x.mensaje).join(' · ')}</div>}
       </td>
@@ -155,47 +167,79 @@ function FilaProducto({ p, stock }: { p: Producto; stock: number }) {
           </div>
         )}
         {!dirty && (
-          <button className="btn ghost small" onClick={() => accion(() => guardarProducto(db, ctx, p.id, { activo: !p.activo }), p.activo ? 'Producto desactivado' : 'Producto activado')}>
-            {p.activo ? 'Desactivar' : 'Activar'}
-          </button>
+          <div className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
+            <button className="btn ghost small" onClick={onEditar}>Editar</button>
+            <button className="btn ghost small" onClick={() => accion(() => guardarProducto(db, ctx, p.id, { activo: !p.activo }), p.activo ? 'Producto desactivado' : 'Producto activado')}>
+              {p.activo ? 'Desactivar' : 'Activar'}
+            </button>
+          </div>
         )}
       </td>
     </tr>
   );
 }
 
-function NuevoProducto({ familias, onClose }: { familias: string[]; onClose: () => void }) {
+/** Crear un producto nuevo, o editar los datos de texto de uno existente. */
+export function FormProducto({ producto, onClose, onCreado }: { producto?: Producto; onClose: () => void; onCreado?: (p: Producto) => void }) {
   const { ctx } = useApp();
   const accion = useAccion();
-  const [f, setF] = useState({ codigo: '', descripcion: '', familia: '', moto: '', costo: '', detal: '', mayor: '', min: '' });
+  const productos = useProductos();
+  const familias = useMemo(() => [...new Set(productos.map((p) => p.familia).filter(Boolean) as string[])].sort(), [productos]);
+  const proveedores = useMemo(() => [...new Set(productos.map((p) => p.proveedor).filter(Boolean) as string[])].sort(), [productos]);
+  const [f, setF] = useState(() => producto
+    ? { codigo: producto.codigo, descripcion: producto.descripcion, familia: producto.familia ?? '', moto: producto.marcaAplica ?? '', proveedor: producto.proveedor ?? '', ref: producto.refProveedor ?? '', costo: '', detal: '', mayor: '', min: '', smin: '' }
+    : { codigo: '', descripcion: '', familia: '', moto: '', proveedor: '', ref: '', costo: '', detal: '', mayor: '', min: '', smin: '' });
+  const [sugerido, setSugerido] = useState('');
+  useEffect(() => { if (!producto) siguienteCodigo(db).then((c) => { setSugerido(c); setF((x) => (x.codigo ? x : { ...x, codigo: c })); }); }, [producto]);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   return (
-    <Modal titulo="Nuevo producto" onClose={onClose}>
+    <Modal titulo={producto ? `Editar ${producto.codigo}` : 'Nuevo producto'} onClose={onClose}>
       <form style={{ display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={async (e) => {
         e.preventDefault();
+        if (producto) {
+          const r = await accion(() => guardarProducto(db, ctx, producto.id, {
+            descripcion: f.descripcion, familia: f.familia, marcaAplica: f.moto, proveedor: f.proveedor, refProveedor: f.ref,
+          }), 'Producto guardado');
+          if (r !== undefined) onClose();
+          return;
+        }
         const r = await accion(() => crearProducto(db, ctx, {
           codigo: f.codigo, descripcion: f.descripcion, familia: f.familia || null, marcaAplica: f.moto || null,
+          proveedor: f.proveedor || null, refProveedor: f.ref || null,
           costo: parseNum(f.costo) ?? 0, precioDetal: parseNum(f.detal), precioMayor: parseNum(f.mayor),
-          cantMinMayor: f.min.trim() ? parseEntero(f.min) : null,
+          cantMinMayor: f.min.trim() ? parseEntero(f.min) : null, stockMinimo: f.smin.trim() ? parseEntero(f.smin) ?? -1 : 0,
         }), 'Producto creado');
-        if (r) onClose();
+        if (r) { onCreado?.(r); onClose(); }
       }}>
         <div className="row">
-          <Campo label="Código"><input id="np-codigo" className="input" value={f.codigo} onChange={set('codigo')} autoFocus /></Campo>
-          <Campo label="Familia">
-            <input id="np-familia" className="input" list="familias" value={f.familia} onChange={set('familia')} />
+          <Campo label={producto ? 'Código' : `Código${sugerido ? ` (siguiente libre: ${sugerido})` : ''}`}>
+            <input id="np-codigo" className="input mono" value={f.codigo} onChange={set('codigo')} disabled={!!producto} />
+          </Campo>
+          <Campo label="Categoría">
+            <input id="np-familia" className="input" list="familias" value={f.familia} onChange={set('familia')} placeholder="Ej. FRENOS" />
             <datalist id="familias">{familias.map((x) => <option key={x} value={x} />)}</datalist>
           </Campo>
         </div>
-        <Campo label="Descripción"><input id="np-desc" className="input" value={f.descripcion} onChange={set('descripcion')} /></Campo>
-        <Campo label="Moto(s) que aplica"><input id="np-moto" className="input" value={f.moto} onChange={set('moto')} placeholder="Ej. JAGUAR 200, HORSE" /></Campo>
+        <Campo label="Descripción"><input id="np-desc" className="input" value={f.descripcion} onChange={set('descripcion')} autoFocus /></Campo>
+        <Campo label="Motos compatibles"><input id="np-moto" className="input" value={f.moto} onChange={set('moto')} placeholder="Ej. BERA SBR, EMPIRE HORSE 150, JAGUAR" /></Campo>
         <div className="row">
-          <Campo label="Costo USD"><input id="np-costo" className="input" inputMode="decimal" value={f.costo} onChange={set('costo')} /></Campo>
-          <Campo label="Precio detal"><input id="np-detal" className="input" inputMode="decimal" value={f.detal} onChange={set('detal')} /></Campo>
-          <Campo label="Precio mayor"><input id="np-mayor" className="input" inputMode="decimal" value={f.mayor} onChange={set('mayor')} /></Campo>
-          <Campo label="Mayor desde (pzs)"><input id="np-min" className="input" inputMode="numeric" value={f.min} onChange={set('min')} /></Campo>
+          <Campo label="Proveedor">
+            <input id="np-proveedor" className="input" list="proveedores" value={f.proveedor} onChange={set('proveedor')} />
+            <datalist id="proveedores">{proveedores.map((x) => <option key={x} value={x} />)}</datalist>
+          </Campo>
+          <Campo label="Ref. del proveedor"><input id="np-ref" className="input" value={f.ref} onChange={set('ref')} /></Campo>
         </div>
-        <div className="row"><span className="spacer" /><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" type="submit">Crear producto</button></div>
+        {!producto && (
+          <div className="row">
+            <Campo label="Costo USD"><input id="np-costo" className="input" inputMode="decimal" value={f.costo} onChange={set('costo')} /></Campo>
+            <Campo label="Precio detal"><input id="np-detal" className="input" inputMode="decimal" value={f.detal} onChange={set('detal')} /></Campo>
+            <Campo label="Precio mayor"><input id="np-mayor" className="input" inputMode="decimal" value={f.mayor} onChange={set('mayor')} /></Campo>
+            <Campo label="Mayor desde (pzs)"><input id="np-min" className="input" inputMode="numeric" value={f.min} onChange={set('min')} /></Campo>
+            <Campo label="Stock mínimo"><input id="np-smin" className="input" inputMode="numeric" value={f.smin} onChange={set('smin')} /></Campo>
+          </div>
+        )}
+        {!producto && <div className="muted small">El stock se carga después en Inventario: “Entrada de mercancía” si acaba de llegar, o “Conteo físico” si ya estaba en la tienda.</div>}
+        <div className="row"><span className="spacer" /><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn primary" type="submit">{producto ? 'Guardar' : 'Crear producto'}</button></div>
       </form>
     </Modal>
   );

@@ -32,6 +32,8 @@ export interface Producto {
   precioMayor: number | null;
   cantMinMayor: number | null;
   stockMinimo: number;
+  proveedor?: string | null; // a quién se le compra (último proveedor)
+  refProveedor?: string | null; // código o referencia del proveedor
   activo: boolean;
   actualizadoEn: string;
   busqueda: string; // texto normalizado para buscar
@@ -50,6 +52,7 @@ export interface Movimiento {
   costoUnitario: number | null;
   referenciaId: string | null;
   nota: string | null;
+  proveedor?: string | null; // en entradas de mercancía
   usuarioId: string;
   usuarioNombre: string;
   creadoEn: string;
@@ -164,6 +167,7 @@ export interface Negocio {
   direccion: string;
   telefono: string;
   mensajeTicket: string;
+  prefijoCodigo?: string; // códigos propios de producto: RYG0001, RYG0002…
 }
 
 export interface Tasa {
