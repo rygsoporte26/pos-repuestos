@@ -5,7 +5,7 @@ import { crearProducto, guardarProducto, siguienteCodigo } from '../../domain/pr
 import { ganancia, revisarPrecios } from '../../domain/precios';
 import { normalizar, parseEntero, parseNum } from '../../domain/util';
 import { Campo, Modal, useAccion, useApp, useToast } from '../components/ui';
-import { claseStock, useProductos, useStock } from '../hooks';
+import { claseStock, useApartados, useProductos, useStock } from '../hooks';
 
 const POR_PAGINA = 50;
 type Filtro = 'todos' | 'sin_precio' | 'con_precio' | 'sin_mayor' | 'inactivos';
@@ -14,6 +14,7 @@ export function Productos() {
   const { ctx } = useApp();
   const productos = useProductos();
   const stock = useStock(ctx.sedeId);
+  const apart = useApartados(ctx.sedeId);
   const [q, setQ] = useState('');
   const [familia, setFamilia] = useState('');
   const [proveedor, setProveedor] = useState('');
@@ -96,7 +97,7 @@ export function Productos() {
               </tr>
             </thead>
             <tbody>
-              {visibles.map((p) => <FilaProducto key={p.id} p={p} stock={stock.get(p.id) ?? 0} onEditar={() => setEditar(p)} />)}
+              {visibles.map((p) => <FilaProducto key={p.id} p={p} stock={stock.get(p.id) ?? 0} apartado={apart.get(p.id) ?? 0} onEditar={() => setEditar(p)} />)}
             </tbody>
           </table>
         </div>
@@ -111,7 +112,7 @@ export function Productos() {
 const s = (n: number | null) => (n === null ? '' : n.toFixed(2).replace('.', ','));
 const ent = (n: number | null) => (n === null ? '' : String(n));
 
-function FilaProducto({ p, stock, onEditar }: { p: Producto; stock: number; onEditar: () => void }) {
+function FilaProducto({ p, stock, apartado, onEditar }: { p: Producto; stock: number; apartado: number; onEditar: () => void }) {
   const { ctx } = useApp();
   const avisar = useToast();
   const accion = useAccion();
@@ -157,7 +158,7 @@ function FilaProducto({ p, stock, onEditar }: { p: Producto; stock: number; onEd
       <td className="num muted">{g === null ? '—' : `${Math.round(g * 100)}%`}</td>
       <td className="num">{campo('mayor', 'Precio mayor', problemas.some((x) => x.campo === 'precioMayor' && x.bloquea))}</td>
       <td className="num">{campo('min', 'Cantidad mínima mayor', problemas.some((x) => x.campo === 'cantMinMayor' && x.bloquea), true)}</td>
-      <td className={`num ${claseStock(stock, p.stockMinimo)}`}>{stock}</td>
+      <td className={`num ${claseStock(stock, p.stockMinimo)}`}>{stock}{apartado > 0 && <div className="small muted" title="Apartadas para pedidos al mayor">{apartado} apart.</div>}</td>
       <td className="num">{campo('smin', 'Stock mínimo', parseEntero(f.smin) === null, true)}</td>
       <td>
         {dirty && (

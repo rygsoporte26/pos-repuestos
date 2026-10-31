@@ -11,7 +11,8 @@ export function Ticket({ venta, negocio }: { venta: Venta; negocio: Negocio }) {
       {negocio.direccion && <div className="c">{negocio.direccion}</div>}
       {negocio.telefono && <div className="c">Tel. {negocio.telefono}</div>}
       <hr />
-      <div className="l"><span>Ticket</span><span>{venta.numero}</span></div>
+      {venta.canal === 'mayor' && <div className="c big">VENTA AL MAYOR</div>}
+      <div className="l"><span>{venta.canal === 'mayor' ? 'Número' : 'Ticket'}</span><span>{venta.numero}</span></div>
       <div className="l"><span>Fecha</span><span>{fechaHora(venta.creadaEn)}</span></div>
       <div className="l"><span>Atendió</span><span>{venta.usuarioNombre}</span></div>
       {venta.clienteNombre && <div className="l"><span>Cliente</span><span>{venta.clienteNombre}</span></div>}

@@ -25,6 +25,7 @@ export function Panel() {
   const ventas = useLiveQuery(() => db.ventas.where('dia').between(semana[0], semana[6], true, true).filter((v) => v.sedeId === ctx.sedeId).toArray(), [semana.join(), ctx.sedeId]) ?? [];
   const sesiones = useLiveQuery(() => db.sesiones.orderBy('abiertaEn').reverse().filter((s) => s.sedeId === ctx.sedeId).limit(10).toArray(), [ctx.sedeId]) ?? [];
   const pendientes = useLiveQuery(() => db.outbox.count(), []) ?? 0;
+  const pedidos = useLiveQuery(() => db.pedidos.where('estado').equals('pendiente').filter((p) => p.sedeId === ctx.sedeId).toArray(), [ctx.sedeId]) ?? [];
   const productos = useProductos();
   const stock = useStock(ctx.sedeId);
 
@@ -34,6 +35,9 @@ export function Panel() {
   const total = round2(ok.reduce((a, v) => a + v.total, 0));
   const costo = round2(ok.reduce((a, v) => a + v.costoTotal, 0));
   const utilidad = round2(total - costo);
+  const deCanal = (c: 'tienda' | 'mayor') => ok.filter((v) => (v.canal ?? 'tienda') === c);
+  const tienda = round2(deCanal('tienda').reduce((a, v) => a + v.total, 0));
+  const mayor = round2(deCanal('mayor').reduce((a, v) => a + v.total, 0));
   const porDia = semana.map((d) => ({ d, t: round2(ventas.filter((v) => v.dia === d && v.estado === 'completada').reduce((a, v) => a + v.total, 0)) }));
   const max = Math.max(1, ...porDia.map((x) => x.t));
 
@@ -63,6 +67,8 @@ export function Panel() {
       </div>
       <div className="kpis">
         <div className="kpi"><span className="label">Vendido</span><span className="v">{usd(total)}</span><span className="s">{ok.length} {ok.length === 1 ? "venta" : "ventas"}</span></div>
+        <div className="kpi"><span className="label">Tienda / Mayor</span><span className="v">{usd(tienda)}</span><span className="s">al mayor {usd(mayor)} ({deCanal('mayor').length})</span></div>
+        <div className="kpi"><span className="label">Pedidos al mayor pendientes</span><span className="v">{pedidos.length}</span><span className="s">{usd(round2(pedidos.reduce((a, p) => a + p.total, 0)))} apartados</span></div>
         <div className="kpi"><span className="label">Utilidad bruta</span><span className="v">{usd(utilidad)}</span><span className="s">{total > 0 ? `${Math.round((utilidad / total) * 100)}% del vendido` : 'precio − costo'}</span></div>
         <div className="kpi"><span className="label">Ticket promedio</span><span className="v">{usd(ok.length ? round2(total / ok.length) : 0)}</span><span className="s">por venta</span></div>
         <div className="kpi"><span className="label">Anuladas</span><span className="v" style={{ color: anuladas.length ? 'var(--bad)' : undefined }}>{anuladas.length}</span><span className="s">{usd(round2(anuladas.reduce((a, v) => a + v.total, 0)))}</span></div>

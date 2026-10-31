@@ -8,7 +8,7 @@ export interface AppState {
   negocio: Negocio;
   irA: (pagina: Pagina) => void;
 }
-export type Pagina = 'vender' | 'caja' | 'ventas' | 'productos' | 'inventario' | 'panel' | 'ajustes';
+export type Pagina = 'vender' | 'caja' | 'ventas' | 'mayor' | 'productos' | 'inventario' | 'panel' | 'ajustes';
 export const AppCtx = createContext<AppState | null>(null);
 export const useApp = () => {
   const v = useContext(AppCtx);

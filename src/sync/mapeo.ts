@@ -1,5 +1,5 @@
 // Conversión entre los registros locales (camelCase) y las tablas de Supabase (snake_case).
-import type { MedioPago, Moneda, Movimiento, Pago, Producto, SesionCaja, Venta } from '../db/types';
+import type { Canal, MedioPago, Moneda, Movimiento, Pago, PedidoMayor, Producto, SesionCaja, Venta } from '../db/types';
 import { normalizarPago } from '../domain/pagos';
 import { textoBusqueda } from '../domain/buscar';
 import { diaLocal } from '../domain/util';
@@ -32,7 +32,7 @@ export const ventaANube = (v: Venta): Fila => ({
   id: v.id, numero: v.numero, sede_id: v.sedeId, dispositivo_id: v.dispositivoId, sesion_caja_id: v.sesionCajaId,
   usuario_id: v.usuarioId, creada_en: v.creadaEn, cliente_nombre: v.clienteNombre, cliente_telefono: v.clienteTelefono,
   items: v.items.map((i) => ({ id: i.id, producto_id: i.productoId, cantidad: i.cantidad, tipo_precio: i.tipoPrecio, precio_unitario: i.precioUnitario })),
-  tasa: v.tasa ?? null, total_bs: v.totalBs ?? null,
+  tasa: v.tasa ?? null, total_bs: v.totalBs ?? null, canal: v.canal ?? 'tienda', pedido_id: v.pedidoId ?? null,
   pagos: v.pagos.map(normalizarPago).map((p) => ({
     id: p.id, medio: p.medio, tipo: p.tipo, moneda: p.moneda, monto: p.monto, monto_moneda: p.montoMoneda, tasa: p.tasa, referencia: p.referencia,
   })),
@@ -53,6 +53,7 @@ export function ventaDeNube(r: Fila, codigos: Map<string, string>): Venta {
     sesionCajaId: (r.sesion_caja_id as string) ?? '', usuarioId: r.usuario_id as string, usuarioNombre: (r.usuario_nombre as string) ?? '',
     clienteNombre: (r.cliente_nombre as string) ?? null, clienteTelefono: (r.cliente_telefono as string) ?? null,
     items, pagos, total: Number(r.total), tasa: n(r.tasa), totalBs: n(r.total_bs), costoTotal: Number(r.costo_total), estado: r.estado as Venta['estado'],
+    canal: ((r.canal as Canal) ?? 'tienda'), pedidoId: (r.pedido_id as string) ?? null,
     creadaEn: r.creada_en as string, dia: diaLocal(new Date(r.creada_en as string)), anuladaEn: (r.anulada_en as string) ?? null,
     anuladaPor: (r.anulada_por_nombre as string) ?? null, motivoAnulacion: (r.motivo_anulacion as string) ?? null,
   };
@@ -85,4 +86,19 @@ export const movimientoDeNube = (r: Fila): Movimiento => ({
   cantidad: Number(r.cantidad), costoUnitario: n(r.costo_unitario), referenciaId: (r.referencia_id as string) ?? null,
   nota: (r.nota as string) ?? null, proveedor: (r.proveedor as string) ?? null, usuarioId: (r.usuario_id as string) ?? '', usuarioNombre: (r.usuario_nombre as string) ?? '',
   creadoEn: r.creado_en as string,
+});
+
+export const pedidoANube = (p: PedidoMayor): Fila => ({
+  id: p.id, numero: p.numero, sede_id: p.sedeId, cliente_nombre: p.clienteNombre, cliente_telefono: p.clienteTelefono,
+  nota: p.nota, items: p.items, total: p.total, estado: p.estado, venta_id: p.ventaId, motivo_cancelacion: p.motivoCancelacion,
+  creado_en: p.creadoEn, creado_por_nombre: p.creadoPor,
+});
+
+export const pedidoDeNube = (r: Fila): PedidoMayor => ({
+  id: r.id as string, numero: r.numero as string, sedeId: r.sede_id as string, clienteNombre: (r.cliente_nombre as string) ?? '',
+  clienteTelefono: (r.cliente_telefono as string) ?? null, nota: (r.nota as string) ?? null,
+  items: ((r.items as PedidoMayor['items']) ?? []).map((i) => ({ ...i, cantidad: Number(i.cantidad), precio: Number(i.precio) })),
+  total: Number(r.total), estado: r.estado as PedidoMayor['estado'], ventaId: (r.venta_id as string) ?? null,
+  motivoCancelacion: (r.motivo_cancelacion as string) ?? null, creadoEn: r.creado_en as string,
+  creadoPor: (r.creado_por_nombre as string) ?? '', actualizadoEn: r.actualizado_en as string,
 });

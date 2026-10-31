@@ -1,5 +1,18 @@
 # Cambios
 
+## 1.3.0 — 2026-10-31
+
+Ventas al mayor separadas de la tienda.
+
+- La tienda (caja del vendedor) vende siempre a precio detal. El precio mayor se ve como referencia, pero las ventas al mayor solo las hacen el administrador y el supervisor.
+- Nueva sección **Mayor** (admin y supervisor): pedido del cliente mayorista con cliente obligatorio, productos, cantidades y precio por pieza (sale del precio mayor y se puede cambiar).
+- **Apartar**: el pedido pendiente reserva las piezas. La tienda ve "Disponible = stock − apartado"; Productos y Entrada de mercancía muestran lo apartado y para quién.
+- **Despachar y cobrar**: se cobra completo (mismos métodos de pago, mixto y vuelto) y sale del inventario como venta al mayor con el mismo número del pedido. También se puede vender al mayor directo sin apartar.
+- Pendientes con estado "Listo" o "Faltan N pzs" (el stock se reparte por orden de llegada), modificar y cancelar con motivo.
+- Las ventas al mayor no entran en la caja ni en el arqueo del vendedor. Numeración propia: S1-MC1-000001 (admin en la caja C1), S1-MSV-000001 (supervisor).
+- Ventas: columna y filtro por canal. Panel: tienda vs. mayor y pedidos pendientes. Ticket con "VENTA AL MAYOR". Respaldo CSV con canal.
+- Migración 005: canal en ventas, tabla pedidos_mayor con permisos (solo admin y supervisor crean o cambian pedidos), registrar_venta v4 (la nube rechaza ventas al mayor de un vendedor), ultimo_mayor.
+
 ## 1.2.0 — 2026-10-31
 
 Catálogo propio de la tienda, con varios proveedores.

@@ -1,12 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PosDB } from '../db/db';
 import { getMeta, setMeta } from '../db/db';
-import type { Negocio, OutboxItem, Producto, Sede, SesionCaja, Tasa, Venta, Movimiento } from '../db/types';
+import type { Negocio, OutboxItem, PedidoMayor, Producto, Sede, SesionCaja, Tasa, Venta, Movimiento } from '../db/types';
 import { puede, type Contexto } from '../domain/contexto';
 import { stockKey } from '../domain/inventario';
+import { claveContadorMayor, prefijoMayor } from '../domain/mayor';
 import { nube, perfilAUsuario, type PerfilNube } from './nube';
 import {
-  movimientoANube, movimientoDeNube, productoANube, productoDeNube, sesionANube, sesionDeNube, ventaANube, ventaDeNube,
+  movimientoANube, movimientoDeNube, pedidoANube, pedidoDeNube, productoANube, productoDeNube, sesionANube, sesionDeNube, ventaANube, ventaDeNube,
 } from './mapeo';
 
 declare const __APP_VERSION__: string;
@@ -52,6 +53,7 @@ export function sincronizar(d: PosDB, ctx: Contexto): Promise<void> {
       const { data } = await sb.auth.getSession();
       if (!data.session) throw new ErrorRechazo('La sesión expiró: sal y vuelve a entrar');
       if (ctx.sedeId && puede(ctx.usuario.rol, 'caja')) await registrarDispositivo(d, sb, ctx);
+      if (ctx.sedeId && puede(ctx.usuario.rol, 'mayor')) await contadorMayor(d, sb, ctx);
       await subir(d, sb);
       await bajar(d, sb, ctx);
       await guardarEstado(d, { enCurso: false, ultimoOk: new Date().toISOString(), error: null, bloqueado: null });
@@ -92,6 +94,18 @@ async function registrarDispositivo(d: PosDB, sb: SupabaseClient, ctxIn: Context
   }
 }
 
+/** El consecutivo de ventas y pedidos al mayor continúa desde el último que tenga la nube. */
+async function contadorMayor(d: PosDB, sb: SupabaseClient, ctx: Contexto) {
+  const disp = await getMeta<{ codigo: string } | null>(d, 'dispositivo', null);
+  const c = { ...ctx, dispositivoCodigo: disp?.codigo ?? ctx.dispositivoCodigo };
+  const ultimo = revisar(await sb.rpc('ultimo_mayor', { p_sede: c.sedeId, p_prefijo: prefijoMayor(c) })) as string | null;
+  if (ultimo) {
+    const nServ = Number(ultimo.split('-').pop());
+    const clave = claveContadorMayor(c);
+    if (nServ > (await getMeta<number>(d, clave, 0))) await setMeta(d, clave, nServ);
+  }
+}
+
 // ---------------------------------------------------------------- SUBIR
 async function subir(d: PosDB, sb: SupabaseClient) {
   for (;;) {
@@ -100,7 +114,7 @@ async function subir(d: PosDB, sb: SupabaseClient) {
     const primero = cola[0];
     // Productos y movimientos seguidos se envían en un solo lote.
     let fin = 1;
-    if (primero.tipo === 'producto' || primero.tipo === 'movimiento' || primero.tipo === 'config') {
+    if (primero.tipo === 'producto' || primero.tipo === 'movimiento' || primero.tipo === 'config' || primero.tipo === 'pedido') {
       while (fin < cola.length && cola[fin].tipo === primero.tipo) fin++;
     }
     const grupo: OutboxItem[] = cola.slice(0, fin);
@@ -125,6 +139,13 @@ async function enviar(sb: SupabaseClient, tipo: OutboxItem['tipo'], grupo: Outbo
       const ult = new Map<string, Producto>();
       for (const x of grupo) ult.set(x.refId, x.payload as Producto);
       revisar(await sb.from('productos').upsert([...ult.values()].map(productoANube)));
+      return;
+    }
+    case 'pedido': {
+      // Si el mismo pedido cambió varias veces (apartado → despachado), basta el último estado.
+      const ult = new Map<string, PedidoMayor>();
+      for (const x of grupo) ult.set(x.refId, x.payload as PedidoMayor);
+      revisar(await sb.from('pedidos_mayor').upsert([...ult.values()].map(pedidoANube)));
       return;
     }
     case 'movimiento':
@@ -152,12 +173,12 @@ async function enviar(sb: SupabaseClient, tipo: OutboxItem['tipo'], grupo: Outbo
 }
 
 export const nombreTipo = (t: OutboxItem['tipo']) =>
-  ({ producto: 'producto', movimiento: 'inventario', sesion_caja: 'caja', venta: 'venta', anulacion: 'anulación', config: 'tasa o ajustes' })[t];
+  ({ producto: 'producto', movimiento: 'inventario', sesion_caja: 'caja', venta: 'venta', anulacion: 'anulación', config: 'tasa o ajustes', pedido: 'pedido al mayor' })[t];
 
 // ---------------------------------------------------------------- BAJAR
-async function cursor(d: PosDB, nombre: string): Promise<string> {
+async function cursor(d: PosDB, nombre: string, todaLaHistoria = false): Promise<string> {
   const c = await getMeta<string | null>(d, `cursor_${nombre}`, null);
-  const base = c ? new Date(c).getTime() - SOLAPE_MS : Date.now() - HISTORIA_DIAS * 864e5;
+  const base = c ? new Date(c).getTime() - SOLAPE_MS : todaLaHistoria ? 0 : Date.now() - HISTORIA_DIAS * 864e5;
   return new Date(base).toISOString();
 }
 
@@ -206,6 +227,11 @@ async function bajar(d: PosDB, sb: SupabaseClient, ctx: Contexto) {
   if (sesiones.length) {
     await d.sesiones.bulkPut(sesiones.filter((r) => !pendientesIds.has(r.id as string)).map(sesionDeNube));
     await setMeta(d, 'cursor_sesiones', maxFecha(sesiones, 'actualizado_en', null));
+  }
+  const pedidos = await paginado(sb, 'pedidos_mayor', '*', 'actualizado_en', await cursor(d, 'pedidos', true)); // pocos: todos, para no perder un apartado viejo
+  if (pedidos.length) {
+    await d.pedidos.bulkPut(pedidos.filter((r) => !pendientesIds.has(r.id as string)).map(pedidoDeNube));
+    await setMeta(d, 'cursor_pedidos', maxFecha(pedidos, 'actualizado_en', null));
   }
   const movs = await paginado(sb, 'movimientos_inventario', '*', 'recibido_en', await cursor(d, 'movimientos'));
   if (movs.length) {
@@ -261,7 +287,7 @@ export async function descartarCambio(d: PosDB, seq: number) {
 
 /** Olvida los cursores para volver a bajar todo (si algo se ve desactualizado). */
 export async function rebajarTodo(d: PosDB, ctx: Contexto) {
-  for (const c of ['productos', 'ventas', 'sesiones', 'movimientos']) await setMeta(d, `cursor_${c}`, null);
+  for (const c of ['productos', 'ventas', 'sesiones', 'movimientos', 'pedidos']) await setMeta(d, `cursor_${c}`, null);
   await sincronizar(d, ctx);
 }
 

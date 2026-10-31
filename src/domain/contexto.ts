@@ -11,12 +11,12 @@ export interface Contexto {
 
 export type Accion =
   | 'vender' | 'caja' | 'ver_ventas' | 'anular' | 'editar_productos'
-  | 'mover_inventario' | 'ver_panel' | 'ajustes' | 'usuarios' | 'ver_ajustes';
+  | 'mover_inventario' | 'ver_panel' | 'ajustes' | 'usuarios' | 'ver_ajustes' | 'mayor';
 
 const PERMISOS: Record<Rol, Accion[]> = {
   vendedor: ['vender', 'caja', 'ver_ventas', 'ver_ajustes'],
-  admin: ['vender', 'caja', 'ver_ventas', 'anular', 'editar_productos', 'mover_inventario', 'ver_panel', 'ajustes', 'usuarios', 'ver_ajustes'],
-  supervisor: ['ver_ventas', 'anular', 'editar_productos', 'mover_inventario', 'ver_panel', 'ajustes', 'usuarios', 'ver_ajustes'],
+  admin: ['vender', 'caja', 'ver_ventas', 'anular', 'editar_productos', 'mover_inventario', 'ver_panel', 'ajustes', 'usuarios', 'ver_ajustes', 'mayor'],
+  supervisor: ['ver_ventas', 'anular', 'editar_productos', 'mover_inventario', 'ver_panel', 'ajustes', 'usuarios', 'ver_ajustes', 'mayor'],
 };
 
 export const puede = (rol: Rol, accion: Accion) => PERMISOS[rol].includes(accion);

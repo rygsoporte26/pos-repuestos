@@ -6,7 +6,7 @@ import { registrarConteo, registrarEntrada } from '../../domain/inventario';
 import { buscarProductos } from '../../domain/buscar';
 import { fechaHora, normalizar, parseEntero, parseNum, usd } from '../../domain/util';
 import { Campo, useAccion, useApp, useToast } from '../components/ui';
-import { claseStock, useProductos, useStock } from '../hooks';
+import { claseStock, useApartados, useProductos, useStock } from '../hooks';
 import { FormProducto } from './Productos';
 
 type Tab = 'conteo' | 'entrada' | 'movimientos';
@@ -108,6 +108,9 @@ function Entrada() {
   const [nota, setNota] = useState('');
   const [proveedor, setProveedor] = useState('');
   const [crear, setCrear] = useState(false);
+  const apart = useApartados(ctx.sedeId);
+  const pedidosDe = useLiveQuery(async () => (p ? (await db.pedidos.where('estado').equals('pendiente').filter((x) => x.sedeId === ctx.sedeId).sortBy('creadoEn'))
+    .flatMap((x) => x.items.filter((i) => i.productoId === p.id).map((i) => `${x.numero} ${x.clienteNombre}: ${i.cantidad}`)) : []), [p?.id, ctx.sedeId]) ?? [];
   const proveedores = useMemo(() => [...new Set(productos.map((x) => x.proveedor).filter(Boolean) as string[])].sort(), [productos]);
   const res = useMemo(() => buscarProductos(productos, q, 12), [productos, q]);
   const elegir = (x: Producto) => { setP(x); setCosto(x.costo ? String(x.costo).replace('.', ',') : ''); setProveedor((v) => v || x.proveedor || ''); };
@@ -160,6 +163,9 @@ function Entrada() {
             <Campo label="Nota (ej. número de factura)"><input id="entrada-nota" className="input" value={nota} onChange={(e) => setNota(e.target.value)} /></Campo>
           </div>
           <div className="muted small">El proveedor y la nota se quedan para el siguiente producto de la misma factura.{(proveedor || nota) && <> <button type="button" className="btn ghost small" onClick={() => { setProveedor(p.proveedor ?? ''); setNota(''); }}>Otra factura</button></>}</div>
+          {(apart.get(p.id) ?? 0) > 0 && (
+            <div className="alert info">Hay <strong>{apart.get(p.id)} piezas apartadas</strong> para pedidos al mayor ({pedidosDe.join(' · ')}). Lo que entra cubre primero esos pedidos; despáchalos en Mayor → Pendientes. El resto queda disponible para la tienda.</div>
+          )}
           {nCosto !== null && nCosto !== p.costo && <div className="alert warn">El costo cambia de {usd(p.costo)} a {usd(nCosto)}. Revisa si hay que ajustar los precios de venta.</div>}
           <div className="row center"><strong>Total a sumar: {total} piezas</strong><span className="spacer" /><button className="btn primary" type="submit" disabled={total <= 0}>Registrar entrada</button></div>
         </form>

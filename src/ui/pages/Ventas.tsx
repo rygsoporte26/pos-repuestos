@@ -13,7 +13,9 @@ export function Ventas() {
   const { ctx, negocio } = useApp();
   const [dia, setDia] = useState(diaLocal());
   const [abierta, setAbierta] = useState<Venta | null>(null);
-  const ventas = useLiveQuery(() => db.ventas.where('dia').equals(dia).filter((v) => v.sedeId === ctx.sedeId).reverse().sortBy('creadaEn'), [dia, ctx.sedeId]) ?? [];
+  const [canal, setCanal] = useState<'todas' | 'tienda' | 'mayor'>('todas');
+  const delDia = useLiveQuery(() => db.ventas.where('dia').equals(dia).filter((v) => v.sedeId === ctx.sedeId).reverse().sortBy('creadaEn'), [dia, ctx.sedeId]) ?? [];
+  const ventas = delDia.filter((v) => canal === 'todas' || (v.canal ?? 'tienda') === canal);
   const completadas = ventas.filter((v) => v.estado === 'completada');
   const total = round2(completadas.reduce((a, v) => a + v.total, 0));
 
@@ -22,6 +24,11 @@ export function Ventas() {
       <div className="row">
         <h1>Ventas</h1>
         <span className="spacer" />
+        <Campo label="Canal">
+          <select id="canal-ventas" className="input" value={canal} onChange={(e) => setCanal(e.target.value as typeof canal)}>
+            <option value="todas">Tienda y mayor</option><option value="tienda">Solo tienda</option><option value="mayor">Solo mayor</option>
+          </select>
+        </Campo>
         <Campo label="Día"><input id="dia-ventas" type="date" className="input" value={dia} onChange={(e) => e.target.value && setDia(e.target.value)} /></Campo>
       </div>
       <div className="panel">
@@ -32,11 +39,11 @@ export function Ventas() {
         {ventas.length === 0 ? <div className="muted">No hay ventas este día.</div> : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Hora</th><th>Ticket</th><th>Atendió</th><th>Cliente</th><th className="num">Productos</th><th className="num">Total</th><th>Pago</th><th>Estado</th></tr></thead>
+              <thead><tr><th>Hora</th><th>Ticket</th><th>Canal</th><th>Atendió</th><th>Cliente</th><th className="num">Productos</th><th className="num">Total</th><th>Pago</th><th>Estado</th></tr></thead>
               <tbody>
                 {ventas.map((v) => (
                   <tr key={v.id} className="click" onClick={() => setAbierta(v)}>
-                    <td>{hora(v.creadaEn)}</td><td className="mono">{v.numero}</td><td>{v.usuarioNombre}</td><td>{v.clienteNombre ?? ''}</td>
+                    <td>{hora(v.creadaEn)}</td><td className="mono">{v.numero}</td><td>{v.canal === 'mayor' ? <span className="badge mayor">Mayor</span> : <span className="badge">Tienda</span>}</td><td>{v.usuarioNombre}</td><td>{v.clienteNombre ?? ''}</td>
                     <td className="num">{v.items.reduce((a, i) => a + i.cantidad, 0)}</td><td className="num">{usd(v.total)}</td>
                     <td className="small">{[...new Set(v.pagos.map(normalizarPago).filter((p) => p.tipo === 'pago').map((p) => medio(p.medio).corto))].join(' + ')}</td>
                     <td>{v.estado === 'anulada' ? <span className="badge bad">Anulada</span> : <span className="badge good">OK</span>}</td>
@@ -47,13 +54,14 @@ export function Ventas() {
           </div>
         )}
       </div>
-      {abierta && <DetalleVenta venta={abierta} puedeAnular={puede(ctx.usuario.rol, 'anular')} onClose={() => setAbierta(null)} negocio={negocio} />}
+      {abierta && <DetalleVenta venta={abierta} onClose={() => setAbierta(null)} negocio={negocio} />}
     </>
   );
 }
 
-function DetalleVenta({ venta, puedeAnular, onClose, negocio }: { venta: Venta; puedeAnular: boolean; onClose: () => void; negocio: ReturnType<typeof useApp>['negocio'] }) {
+export function DetalleVenta({ venta, onClose, negocio }: { venta: Venta; onClose: () => void; negocio: ReturnType<typeof useApp>['negocio'] }) {
   const { ctx } = useApp();
+  const puedeAnular = puede(ctx.usuario.rol, 'anular');
   const accion = useAccion();
   const [motivo, setMotivo] = useState('');
   const [v, setV] = useState(venta);

@@ -77,10 +77,12 @@ describe('flujo de venta, caja e inventario', () => {
     await registrarConteo(d, ctx(), 'p1', 50);
     expect(await stockDe(d, 'S', 'p1')).toBe(50);
     await abrirCaja(d, ctx('vendedor'), 20);
-    const v1 = await registrarVenta(d, ctx('vendedor'), [{ producto: prod(), cantidad: 12 }], { ...efectivo(20), clienteNombre: 'Taller Pepe' });
-    expect(v1.total).toBe(18); // 12 x 1.50 mayor
-    expect(v1.items[0].tipoPrecio).toBe('mayor');
-    expect(v1.pagos.find((p) => p.tipo === 'vuelto')?.montoMoneda).toBe(-2);
+    // En la tienda siempre es precio detal, aunque lleve más de la cantidad mínima mayor.
+    const v1 = await registrarVenta(d, ctx('vendedor'), [{ producto: prod(), cantidad: 12 }], { ...efectivo(30), clienteNombre: 'Taller Pepe' });
+    expect(v1.total).toBe(24); // 12 x 2 detal
+    expect(v1.items[0].tipoPrecio).toBe('detal');
+    expect(v1.canal).toBe('tienda');
+    expect(v1.pagos.find((p) => p.tipo === 'vuelto')?.montoMoneda).toBe(-6);
     expect(v1.numero).toBe('S1-C1-000001');
     const v2 = await registrarVenta(d, ctx('vendedor'), [{ producto: prod(), cantidad: 3 }], efectivo(6));
     expect(v2.numero).toBe('S1-C1-000002');
@@ -93,8 +95,8 @@ describe('flujo de venta, caja e inventario', () => {
 
     const s = (await sesionAbierta(d, 'D1'))!;
     const r = await resumenCaja(d, s);
-    expect(r).toMatchObject({ ventas: 1, totalUsd: 18, anuladas: 1, esperado: 38, esperadoBs: 0 });
-    const cerrada = await cerrarCaja(d, ctx('vendedor'), 37, 0);
+    expect(r).toMatchObject({ ventas: 1, totalUsd: 24, anuladas: 1, esperado: 44, esperadoBs: 0 });
+    const cerrada = await cerrarCaja(d, ctx('vendedor'), 43, 0);
     expect(cerrada.diferencia).toBe(-1);
     expect(await sesionAbierta(d, 'D1')).toBeUndefined();
 

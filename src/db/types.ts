@@ -117,11 +117,45 @@ export interface Venta {
   totalBs: number | null;
   costoTotal: number;
   estado: 'completada' | 'anulada';
+  canal?: Canal; // sin valor = tienda (ventas anteriores a la 1.3.0)
+  pedidoId?: string | null; // venta al mayor que despachó un pedido apartado
   creadaEn: string;
   dia: string; // YYYY-MM-DD local, para filtrar
   anuladaEn: string | null;
   anuladaPor: string | null;
   motivoAnulacion: string | null;
+}
+
+/** tienda = caja del punto de venta (siempre detal); mayor = la gestionan admin o supervisor. */
+export type Canal = 'tienda' | 'mayor';
+
+export interface ItemPedido {
+  productoId: string;
+  codigo: string;
+  descripcion: string;
+  cantidad: number;
+  precio: number; // USD por pieza acordado con el cliente
+}
+
+/**
+ * Pedido de un cliente mayorista. Mientras está "pendiente" aparta esas piezas: la tienda
+ * no las ve como disponibles. Al despacharlo se cobra completo y se vuelve una venta al mayor.
+ */
+export interface PedidoMayor {
+  id: string;
+  numero: string; // S1-MC1-000001 (el mismo número queda en la venta)
+  sedeId: string;
+  clienteNombre: string;
+  clienteTelefono: string | null;
+  nota: string | null;
+  items: ItemPedido[];
+  total: number;
+  estado: 'pendiente' | 'despachado' | 'cancelado';
+  ventaId: string | null;
+  motivoCancelacion: string | null;
+  creadoEn: string;
+  creadoPor: string; // nombre
+  actualizadoEn: string;
 }
 
 export interface SesionCaja {
@@ -144,7 +178,7 @@ export interface SesionCaja {
   notas: string | null;
 }
 
-export type TipoOutbox = 'venta' | 'anulacion' | 'movimiento' | 'producto' | 'sesion_caja' | 'config';
+export type TipoOutbox = 'venta' | 'anulacion' | 'movimiento' | 'producto' | 'sesion_caja' | 'config' | 'pedido';
 
 export interface OutboxItem {
   seq?: number;

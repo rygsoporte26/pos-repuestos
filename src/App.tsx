@@ -8,6 +8,7 @@ import { AppCtx, Campo, useToast, type Pagina } from './ui/components/ui';
 import { Vender } from './ui/pages/Vender';
 import { Caja } from './ui/pages/Caja';
 import { Ventas } from './ui/pages/Ventas';
+import { Mayor } from './ui/pages/Mayor';
 import { Productos } from './ui/pages/Productos';
 import { Inventario } from './ui/pages/Inventario';
 import { Panel } from './ui/pages/Panel';
@@ -25,6 +26,7 @@ const PAGINAS: { id: Pagina; nombre: string; accion: Accion }[] = [
   { id: 'vender', nombre: 'Vender', accion: 'vender' },
   { id: 'caja', nombre: 'Caja', accion: 'caja' },
   { id: 'ventas', nombre: 'Ventas', accion: 'ver_ventas' },
+  { id: 'mayor', nombre: 'Mayor', accion: 'mayor' },
   { id: 'productos', nombre: 'Productos', accion: 'editar_productos' },
   { id: 'inventario', nombre: 'Inventario', accion: 'mover_inventario' },
   { id: 'panel', nombre: 'Panel', accion: 'ver_panel' },
@@ -172,6 +174,7 @@ export function App() {
           {actual === 'vender' && <Vender />}
           {actual === 'caja' && <Caja />}
           {actual === 'ventas' && <Ventas />}
+          {actual === 'mayor' && <Mayor />}
           {actual === 'productos' && <Productos />}
           {actual === 'inventario' && <Inventario />}
           {actual === 'panel' && <Panel />}

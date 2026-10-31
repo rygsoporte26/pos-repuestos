@@ -24,9 +24,9 @@ export async function csvProductos(d: PosDB, ctx: Contexto): Promise<string> {
 
 export async function csvVentas(d: PosDB, desde: string, hasta: string): Promise<string> {
   const ventas = (await d.ventas.where('dia').between(desde, hasta, true, true).toArray()).sort((a, b) => a.creadaEn.localeCompare(b.creadaEn));
-  const filas: unknown[][] = [['FECHA', 'TICKET', 'ESTADO', 'VENDEDOR', 'CLIENTE', 'TELEFONO', 'CODIGO', 'PRODUCTO', 'CANTIDAD', 'TIPO PRECIO', 'PRECIO', 'TOTAL LINEA', 'COSTO LINEA', 'TASA', 'PAGOS', 'MOTIVO ANULACION']];
+  const filas: unknown[][] = [['FECHA', 'TICKET', 'CANAL', 'ESTADO', 'VENDEDOR', 'CLIENTE', 'TELEFONO', 'CODIGO', 'PRODUCTO', 'CANTIDAD', 'TIPO PRECIO', 'PRECIO', 'TOTAL LINEA', 'COSTO LINEA', 'TASA', 'PAGOS', 'MOTIVO ANULACION']];
   for (const v of ventas) for (const i of v.items) {
-    filas.push([new Date(v.creadaEn).toLocaleString('es-VE'), v.numero, v.estado, v.usuarioNombre, v.clienteNombre, v.clienteTelefono, i.codigo,
+    filas.push([new Date(v.creadaEn).toLocaleString('es-VE'), v.numero, v.canal === 'mayor' ? 'MAYOR' : 'TIENDA', v.estado, v.usuarioNombre, v.clienteNombre, v.clienteTelefono, i.codigo,
       i.descripcion, i.cantidad, i.tipoPrecio, numero(i.precioUnitario), numero(i.total), numero(Math.round(i.cantidad * i.costoUnitario * 100) / 100), numero(v.tasa ?? null),
       v.pagos.map(normalizarPago).map((p) => `${p.tipo === 'vuelto' ? 'vuelto ' : ''}${medio(p.medio).corto} ${p.moneda === 'VES' ? 'Bs' : '$'} ${numero(p.montoMoneda)}${p.referencia ? ` ref ${p.referencia}` : ''}`).join(' | '), v.motivoAnulacion]);
   }

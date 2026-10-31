@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type {
-  Meta, Movimiento, OutboxItem, Producto, Sede, SesionCaja, Stock, Usuario, Venta,
+  Meta, Movimiento, OutboxItem, PedidoMayor, Producto, Sede, SesionCaja, Stock, Usuario, Venta,
 } from './types';
 
 // Base local del navegador (IndexedDB). Es la que usa la caja siempre, con o sin
@@ -15,6 +15,7 @@ export class PosDB extends Dexie {
   sedes!: Table<Sede, string>;
   outbox!: Table<OutboxItem, number>;
   meta!: Table<Meta, string>;
+  pedidos!: Table<PedidoMayor, string>;
 
   constructor(nombre = 'pos-repuestos') {
     super(nombre);
@@ -30,6 +31,8 @@ export class PosDB extends Dexie {
       outbox: '++seq, tipo, refId',
       meta: 'clave',
     });
+    // 1.3.0: pedidos de clientes mayoristas.
+    this.version(2).stores({ pedidos: 'id, numero, sedeId, estado, creadoEn' });
   }
 }
 
