@@ -6,6 +6,7 @@ import { bs, enMoneda, fechaHora, parseNum, round2, usd } from '../../domain/uti
 import { MEDIOS, type TotalMedio } from '../../domain/pagos';
 import type { MedioPago } from '../../db/types';
 import { Campo, useAccion, useApp } from '../components/ui';
+import { leerEstado } from '../../sync/motor';
 
 export function Caja() {
   const { ctx, irA } = useApp();
@@ -22,6 +23,7 @@ export function Caja() {
   const [contadoBs, setContadoBs] = useState('');
   const [notas, setNotas] = useState('');
   const [confirmar, setConfirmar] = useState(false);
+  const aviso = useLiveQuery(async () => (await leerEstado(db)).aviso ?? null, []);
 
   if (sesion === undefined) return <div className="muted">Cargando…</div>;
 
@@ -34,6 +36,7 @@ export function Caja() {
   return (
     <>
       <h1>Caja {ctx.dispositivoCodigo}</h1>
+      {aviso && <div className="alert bad">{aviso}</div>}
       {!sesion ? (
         <form className="panel" style={{ maxWidth: 560 }} onSubmit={async (e) => {
           e.preventDefault();

@@ -5,6 +5,7 @@ import type { Negocio, OutboxItem, PedidoMayor, Producto, Sede, SesionCaja, Tasa
 import { puede, type Contexto } from '../domain/contexto';
 import { stockKey } from '../domain/inventario';
 import { claveContadorMayor, prefijoMayor } from '../domain/mayor';
+import { decidirCodigo, type EquipoNube } from './codigoCaja';
 import { nube, perfilAUsuario, type PerfilNube } from './nube';
 import {
   movimientoANube, movimientoDeNube, pedidoANube, pedidoDeNube, productoANube, productoDeNube, sesionANube, sesionDeNube, ventaANube, ventaDeNube,
@@ -17,6 +18,7 @@ export interface EstadoSync {
   ultimoOk: string | null; // última sincronización completa
   error: string | null; // último error (se limpia al sincronizar bien)
   bloqueado: number | null; // seq del cambio que la nube rechazó
+  aviso?: string | null; // problema que necesita una persona (ej. dos PCs con la misma caja)
 }
 
 const LOTE = 200;
@@ -69,17 +71,24 @@ export function sincronizar(d: PosDB, ctx: Contexto): Promise<void> {
 
 async function registrarDispositivo(d: PosDB, sb: SupabaseClient, ctxIn: Contexto) {
   let ctx = ctxIn;
-  // Primera vez de este PC: se le asigna el primer código de caja libre de la sede (C1, C2…).
-  if (!(await getMeta<boolean>(d, 'codigo_asignado', false))) {
-    const otros = revisar(await sb.from('dispositivos').select('id,codigo').eq('sede_id', ctx.sedeId)) as { id: string; codigo: string }[];
-    const usados = new Set(otros.filter((o) => o.id !== ctx.dispositivoId).map((o) => o.codigo));
-    let n = 1;
-    while (usados.has(`C${n}`)) n++;
-    const codigo = usados.has(ctx.dispositivoCodigo) ? `C${n}` : ctx.dispositivoCodigo;
-    const disp = await getMeta<{ id: string; codigo: string; sedeId: string | null }>(d, 'dispositivo', { id: ctx.dispositivoId, codigo, sedeId: ctx.sedeId });
-    await setMeta(d, 'dispositivo', { ...disp, codigo });
+  // En cada sincronización se revisa que ningún otro PC de la sede tenga el mismo código de caja.
+  const equipos = revisar(await sb.from('dispositivos').select('id,codigo,creado_en').eq('sede_id', ctx.sedeId)) as EquipoNube[];
+  const asignado = await getMeta<boolean>(d, 'codigo_asignado', false);
+  const yoVendi = (await getMeta<number>(d, `contador_ticket_${ctx.dispositivoId}`, 0)) > 0
+    || (await getMeta<number>(d, claveContadorMayor(ctx), 0)) > 0;
+  const choque = equipos.find((e) => e.id !== ctx.dispositivoId && e.codigo === ctx.dispositivoCodigo);
+  let otroVendio = false;
+  if (choque && asignado) {
+    const r = revisar(await sb.from('ventas').select('id').eq('dispositivo_id', choque.id).limit(1)) as unknown[];
+    otroVendio = r.length > 0;
+  }
+  const dec = decidirCodigo({ miId: ctx.dispositivoId, miCodigo: ctx.dispositivoCodigo, asignado, equipos, yoVendi, otroVendio: () => otroVendio });
+  await guardarEstado(d, { aviso: dec.aviso });
+  if (dec.codigo !== ctx.dispositivoCodigo || !asignado) {
+    const disp = await getMeta<{ id: string; codigo: string; sedeId: string | null }>(d, 'dispositivo', { id: ctx.dispositivoId, codigo: dec.codigo, sedeId: ctx.sedeId });
+    await setMeta(d, 'dispositivo', { ...disp, codigo: dec.codigo });
     await setMeta(d, 'codigo_asignado', true);
-    ctx = { ...ctx, dispositivoCodigo: codigo };
+    ctx = { ...ctx, dispositivoCodigo: dec.codigo };
   }
   revisar(await sb.from('dispositivos').upsert({
     id: ctx.dispositivoId, sede_id: ctx.sedeId, codigo: ctx.dispositivoCodigo, nombre: `Caja ${ctx.dispositivoCodigo}`,

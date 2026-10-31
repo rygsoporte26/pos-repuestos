@@ -1,5 +1,9 @@
 # Cambios
 
+## 1.3.1 — 2026-10-31
+
+- Corrección: dos PCs de la misma sede podían quedar con el mismo código de caja (por ejemplo, los dos S1-C1) si entraban al mismo tiempo o después de limpiar la base. Ahora en cada sincronización se revisa y se cambia solo el equipo que todavía no ha vendido (si ninguno vendió, el más nuevo). Si los dos ya vendieron con el mismo código, se muestra un aviso en Caja y en Ajustes.
+
 ## 1.3.0 — 2026-10-31
 
 Ventas al mayor separadas de la tienda.

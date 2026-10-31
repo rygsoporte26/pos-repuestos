@@ -51,6 +51,7 @@ function Sincronizacion() {
         <tr><td>Cambios guardados en este equipo, por subir</td><td className="num">{pendientes}</td></tr>
         <tr><td>Estado</td><td className="num">{estado?.enCurso ? 'Sincronizando…' : estado?.error ?? 'Al día'}</td></tr>
       </tbody></table>
+      {estado?.aviso && <div className="alert bad">{estado.aviso}</div>}
       <div><button className="btn" onClick={() => accion(() => sincronizar(db, ctx), 'Sincronización terminada')}>Sincronizar ahora</button></div>
       {bloqueado && (
         <div className="alert bad" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
