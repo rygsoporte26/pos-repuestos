@@ -47,3 +47,20 @@ export async function getMeta<T>(d: PosDB, clave: string, defecto: T): Promise<T
 export function setMeta(d: PosDB, clave: string, valor: unknown) {
   return d.meta.put({ clave, valor });
 }
+
+export type DatosDispositivo = { id: string; codigo: string; sedeId: string | null };
+
+/**
+ * Cambia datos de este equipo (código de caja, sede) leyendo y guardando en una sola
+ * transacción, para que la sincronización y la pantalla no se pisen el cambio.
+ */
+export function actualizarDispositivo(d: PosDB, cambios: Partial<Omit<DatosDispositivo, 'id'>>) {
+  return d.transaction('rw', d.meta, async () => {
+    const actual = await getMeta<DatosDispositivo | null>(d, 'dispositivo', null);
+    if (!actual) return null;
+    if (Object.entries(cambios).every(([k, v]) => actual[k as keyof DatosDispositivo] === v)) return actual;
+    const nuevo = { ...actual, ...cambios };
+    await setMeta(d, 'dispositivo', nuevo);
+    return nuevo;
+  });
+}

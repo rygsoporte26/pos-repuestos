@@ -5,16 +5,16 @@ caja con arqueo y panel para el supervisor. Funciona sin internet en la tienda.
 
 ## Estado
 
-**Versión 1.3.0:** ventas al mayor separadas de la tienda (pedidos que apartan piezas, despacho cobrado, solo admin y supervisor),
+**Versión 1.4.0:** descuento por pago en divisa (tope del admin) y método USDT. Antes, 1.3.0: ventas al mayor separadas de la tienda (pedidos que apartan piezas, despacho cobrado, solo admin y supervisor),
 catálogo propio de la tienda con varios proveedores y códigos RYG0001…, plantilla Excel
 para cargar catálogo y stock inicial de una vez, métodos de pago (efectivo Bs y $, punto de venta, Biopago,
-pago móvil, Binance), pago mixto, vuelto y tasa BCV del día. Login con Supabase, venta sin internet
+pago móvil, Binance, USDT), pago mixto, vuelto y tasa BCV del día. Login con Supabase, venta sin internet
 con sincronización automática, usuarios, respaldo.
 La guía de puesta en marcha paso a paso está en el documento "POS Repuestos — Guía de implementación".
 
 ## Instalación en la nube (resumen)
 
-1. Supabase → SQL Editor: ejecutar en orden `001_esquema.sql`, `002_sincronizacion.sql`, `003_metodos_pago.sql`, `004_proveedores.sql` y `005_ventas_mayor.sql` (carpeta `supabase/migrations/`).
+1. Supabase → SQL Editor: ejecutar en orden `001_esquema.sql`, `002_sincronizacion.sql`, `003_metodos_pago.sql`, `004_proveedores.sql`, `005_ventas_mayor.sql`, `006_cajas.sql` y `007_descuento_divisa.sql` (carpeta `supabase/migrations/`).
 2. Crear el usuario del supervisor en Authentication y ejecutar `supabase/primer_usuario.sql` con su correo.
 3. Cloudflare Pages conectado a este repositorio: build `npm run build`, salida `dist`,
    variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` y `NODE_VERSION=22`.

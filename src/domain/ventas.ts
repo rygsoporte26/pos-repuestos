@@ -5,7 +5,8 @@ import { ErrorNegocio, exigir, type Contexto } from './contexto';
 import { aplicarMovimiento, nuevoMovimiento } from './inventario';
 import { totalLinea } from './precios';
 import { sesionAbierta } from './caja';
-import { aBs, armarPagos, type EntradaPago, type Vuelto } from './pagos';
+import { aBs, armarPagos, DESCUENTO_MAX_POR_DEFECTO, validarDescuento, type EntradaPago, type Vuelto } from './pagos';
+import type { Negocio } from '../db/types';
 import { encolar } from '../sync/outbox';
 import { diaLocal, round2, uuid } from './util';
 
@@ -54,6 +55,7 @@ export interface DatosCobro {
   pagos: EntradaPago[]; // uno o varios métodos (pago mixto)
   vuelto?: Vuelto; // por dónde se devuelve lo que sobra
   tasa: number | null; // tasa BCV vigente (Bs por USD)
+  descuento?: number; // USD, solo si todo se paga en divisa
   clienteNombre?: string;
   clienteTelefono?: string;
 }
@@ -73,7 +75,10 @@ export async function guardarVenta(
   d: PosDB, ctx: Contexto, calc: { lineas: LineaCalculada[]; total: number }, cobro: DatosCobro,
   opts: { canal: Canal; numero: string; sesionCajaId: string; dispositivoId: string; pedidoId?: string | null },
 ): Promise<Venta> {
-  const pagos = armarPagos(calc.total, cobro.pagos, cobro.tasa, cobro.vuelto);
+  const maxPct = (await getMeta<Negocio | null>(d, 'negocio', null))?.descuentoMaxDivisa ?? DESCUENTO_MAX_POR_DEFECTO;
+  const descuento = validarDescuento(calc.total, cobro.descuento, cobro.pagos, maxPct);
+  const total = round2(calc.total - descuento);
+  const pagos = armarPagos(total, cobro.pagos, cobro.tasa, cobro.vuelto);
   const ahora = new Date();
   const id = uuid();
   const items: VentaItem[] = calc.lineas.map((l) => ({
@@ -84,7 +89,7 @@ export async function guardarVenta(
     id, numero: opts.numero, sedeId: ctx.sedeId, dispositivoId: opts.dispositivoId,
     sesionCajaId: opts.sesionCajaId, usuarioId: ctx.usuario.id, usuarioNombre: ctx.usuario.nombre,
     clienteNombre: cobro.clienteNombre?.trim() || null, clienteTelefono: cobro.clienteTelefono?.trim() || null,
-    items, pagos, total: calc.total, tasa: cobro.tasa, totalBs: cobro.tasa ? aBs(calc.total, cobro.tasa) : null,
+    items, pagos, total, descuento, tasa: cobro.tasa, totalBs: cobro.tasa ? aBs(total, cobro.tasa) : null,
     costoTotal: round2(items.reduce((a, i) => a + i.cantidad * i.costoUnitario, 0)),
     estado: 'completada', canal: opts.canal, pedidoId: opts.pedidoId ?? null, creadaEn: ahora.toISOString(), dia: diaLocal(ahora),
     anuladaEn: null, anuladaPor: null, motivoAnulacion: null,
@@ -109,7 +114,6 @@ export async function registrarVenta(d: PosDB, ctx: Contexto, carrito: LineaCarr
   exigir(ctx, 'vender');
   validarCantidades(carrito);
   const calc = calcularCarrito(carrito, 'tienda');
-  armarPagos(calc.total, cobro.pagos, cobro.tasa, cobro.vuelto); // valida antes de abrir la transacción
 
   return d.transaction('rw', [d.ventas, d.movimientos, d.stock, d.outbox, d.meta, d.sesiones], async () => {
     const sesion = await sesionAbierta(d, ctx.dispositivoId);

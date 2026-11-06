@@ -8,7 +8,6 @@ import type { PosDB } from '../db/db';
 import { getMeta, setMeta } from '../db/db';
 import type { ItemPedido, PedidoMayor, Producto, Venta } from '../db/types';
 import { ErrorNegocio, exigir, puede, type Contexto } from './contexto';
-import { armarPagos } from './pagos';
 import { calcularCarrito, guardarVenta, validarCantidades, type DatosCobro, type LineaCarrito } from './ventas';
 import { encolar } from '../sync/outbox';
 import { round2, uuid } from './util';
@@ -99,7 +98,6 @@ export async function venderMayor(
   exigir(ctx, 'mayor');
   const { items, total, lineas } = armarItems(datos);
   const calc = calcularCarrito(lineas, 'mayor');
-  armarPagos(calc.total, cobro.pagos, cobro.tasa, cobro.vuelto); // valida el cobro antes de guardar
   return d.transaction('rw', [d.pedidos, d.ventas, d.movimientos, d.stock, d.outbox, d.meta], async () => {
     const pedido = pedidoId ? await d.pedidos.get(pedidoId) : undefined;
     if (pedidoId && !pedido) throw new ErrorNegocio('Pedido no encontrado');

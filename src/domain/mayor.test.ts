@@ -107,3 +107,45 @@ describe('ventas al mayor', () => {
     expect(p.items[0].precio).toBe(3);
   });
 });
+
+describe('descuento por pago en divisa', () => {
+  let d: PosDB;
+  const p1 = prod();
+  beforeEach(async () => {
+    d = new PosDB(`dsc-${Math.random()}`);
+    await d.productos.add(p1);
+    await registrarConteo(d, ctx('admin'), 'p1', 100);
+    await abrirCaja(d, ctx('vendedor'), 20);
+  });
+  const pago = (medio: 'efectivo_usd' | 'binance' | 'usdt' | 'pago_movil', n: number, ref?: string) => ({ medio, montoMoneda: n, referencia: ref });
+
+  it('vendedor descuenta hasta el tope cuando todo es en divisa', async () => {
+    // 10 piezas × $5 = $50; 10% máx = $5
+    const v = await registrarVenta(d, ctx('vendedor'), [{ producto: p1, cantidad: 10 }], { pagos: [pago('efectivo_usd', 45)], tasa: 200, descuento: 5 });
+    expect(v).toMatchObject({ total: 45, descuento: 5, totalBs: 9000 });
+    expect(v.items[0].total).toBe(50);
+    const caja = await resumenCaja(d, (await sesionAbierta(d, 'D1'))!);
+    expect(caja).toMatchObject({ totalUsd: 45, esperado: 65 });
+    // USDT + efectivo $ (todo en divisa) también vale
+    const v2 = await registrarVenta(d, ctx('vendedor'), [{ producto: p1, cantidad: 2 }], { pagos: [pago('efectivo_usd', 4), pago('usdt', 5.5, 'TX9')], tasa: 200, descuento: 0.5 });
+    expect(v2.total).toBe(9.5);
+  });
+
+  it('no deja pasar del tope, ni con pago mixto en bolívares, ni negativo', async () => {
+    const carrito = [{ producto: p1, cantidad: 10 }];
+    await expect(registrarVenta(d, ctx('vendedor'), carrito, { pagos: [pago('efectivo_usd', 44)], tasa: 200, descuento: 6 })).rejects.toThrow('máximo es 10%');
+    await expect(registrarVenta(d, ctx('vendedor'), carrito, { pagos: [pago('efectivo_usd', 20), pago('pago_movil', 5000, '123')], tasa: 200, descuento: 5 })).rejects.toThrow('todo se paga en divisa');
+    await expect(registrarVenta(d, ctx('vendedor'), carrito, { pagos: [pago('efectivo_usd', 55)], tasa: 200, descuento: -5 })).rejects.toThrow('negativo');
+    expect(await d.ventas.count()).toBe(0);
+    // el tope lo cambia el admin en los datos del negocio
+    await d.meta.put({ clave: 'negocio', valor: { nombre: 'x', direccion: '', telefono: '', mensajeTicket: '', descuentoMaxDivisa: 20 } });
+    const v = await registrarVenta(d, ctx('vendedor'), carrito, { pagos: [pago('binance', 40, 'B1')], tasa: 200, descuento: 10 });
+    expect(v.total).toBe(40);
+    expect(v.numero).toBe('S1-C1-000001'); // los intentos rechazados no gastan números
+  });
+
+  it('también en ventas al mayor', async () => {
+    const v = await venderMayor(d, ctx('admin'), { clienteNombre: 'Taller', lineas: [{ producto: p1, cantidad: 10 }] }, { pagos: [pago('usdt', 36, 'U1')], tasa: 200, descuento: 4 });
+    expect(v).toMatchObject({ canal: 'mayor', total: 36, descuento: 4 });
+  });
+});

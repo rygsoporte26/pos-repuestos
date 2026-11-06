@@ -32,7 +32,7 @@ export const ventaANube = (v: Venta): Fila => ({
   id: v.id, numero: v.numero, sede_id: v.sedeId, dispositivo_id: v.dispositivoId, sesion_caja_id: v.sesionCajaId,
   usuario_id: v.usuarioId, creada_en: v.creadaEn, cliente_nombre: v.clienteNombre, cliente_telefono: v.clienteTelefono,
   items: v.items.map((i) => ({ id: i.id, producto_id: i.productoId, cantidad: i.cantidad, tipo_precio: i.tipoPrecio, precio_unitario: i.precioUnitario })),
-  tasa: v.tasa ?? null, total_bs: v.totalBs ?? null, canal: v.canal ?? 'tienda', pedido_id: v.pedidoId ?? null,
+  tasa: v.tasa ?? null, total_bs: v.totalBs ?? null, descuento: v.descuento ?? 0, canal: v.canal ?? 'tienda', pedido_id: v.pedidoId ?? null,
   pagos: v.pagos.map(normalizarPago).map((p) => ({
     id: p.id, medio: p.medio, tipo: p.tipo, moneda: p.moneda, monto: p.monto, monto_moneda: p.montoMoneda, tasa: p.tasa, referencia: p.referencia,
   })),
@@ -52,7 +52,7 @@ export function ventaDeNube(r: Fila, codigos: Map<string, string>): Venta {
     id: r.id as string, numero: r.numero as string, sedeId: r.sede_id as string, dispositivoId: (r.dispositivo_id as string) ?? '',
     sesionCajaId: (r.sesion_caja_id as string) ?? '', usuarioId: r.usuario_id as string, usuarioNombre: (r.usuario_nombre as string) ?? '',
     clienteNombre: (r.cliente_nombre as string) ?? null, clienteTelefono: (r.cliente_telefono as string) ?? null,
-    items, pagos, total: Number(r.total), tasa: n(r.tasa), totalBs: n(r.total_bs), costoTotal: Number(r.costo_total), estado: r.estado as Venta['estado'],
+    items, pagos, total: Number(r.total), descuento: Number(r.descuento ?? 0), tasa: n(r.tasa), totalBs: n(r.total_bs), costoTotal: Number(r.costo_total), estado: r.estado as Venta['estado'],
     canal: ((r.canal as Canal) ?? 'tienda'), pedidoId: (r.pedido_id as string) ?? null,
     creadaEn: r.creada_en as string, dia: diaLocal(new Date(r.creada_en as string)), anuladaEn: (r.anulada_en as string) ?? null,
     anuladaPor: (r.anulada_por_nombre as string) ?? null, motivoAnulacion: (r.motivo_anulacion as string) ?? null,

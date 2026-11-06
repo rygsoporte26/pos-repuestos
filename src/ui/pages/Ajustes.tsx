@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import readXlsxFile from 'read-excel-file';
-import { db, getMeta, setMeta } from '../../db/db';
+import { actualizarDispositivo, db, getMeta, setMeta } from '../../db/db';
 import type { Negocio, Rol, Usuario } from '../../db/types';
 import { exigir, puede } from '../../domain/contexto';
 import { recalcularStock } from '../../domain/inventario';
@@ -11,7 +11,8 @@ import { diaLocal, fechaHora, num2, parseNum, uuid } from '../../domain/util';
 import { consultarTasaBcv, guardarTasa, tasaDeHoy } from '../../domain/tasa';
 import { useTasa } from '../hooks';
 import { MODO_NUBE, nube } from '../../sync/nube';
-import { descartarCambio, leerEstado, nombreTipo, rebajarTodo, reiniciarEquipo, sincronizar } from '../../sync/motor';
+import { cajasDeSede, codigoOcupado, descartarCambio, leerEstado, nombreTipo, quitarCaja, rebajarTodo, reiniciarEquipo, sincronizar } from '../../sync/motor';
+import { activo, type EquipoNube } from '../../sync/codigoCaja';
 import { Campo, useAccion, useApp, useToast } from '../components/ui';
 
 const ROLES: Record<Rol, string> = { vendedor: 'Vendedor', admin: 'Administrador', supervisor: 'Supervisor' };
@@ -28,6 +29,7 @@ export function Ajustes({ onCambio }: { onCambio: () => void }) {
       {admin && <Respaldo />}
       {admin && <DatosNegocio onCambio={onCambio} />}
       {admin && puede(ctx.usuario.rol, 'caja') && <EsteEquipo onCambio={onCambio} />}
+      {admin && MODO_NUBE && <CajasSede />}
       {admin && (MODO_NUBE ? <UsuariosNube /> : <UsuariosDemo />)}
       {admin && <Mantenimiento />}
       {!admin && !MODO_NUBE && <div className="muted">Los ajustes los maneja el administrador.</div>}
@@ -171,6 +173,11 @@ function DatosNegocio({ onCambio }: { onCambio: () => void }) {
       </div>
       <Campo label="Dirección"><input id="neg-dir" className="input" value={n.direccion} onChange={(e) => setN({ ...n, direccion: e.target.value })} /></Campo>
       <Campo label="Mensaje al pie del ticket"><input id="neg-msg" className="input" value={n.mensajeTicket} onChange={(e) => setN({ ...n, mensajeTicket: e.target.value })} /></Campo>
+      <Campo label="Descuento máximo por pago en divisa (%)">
+        <input id="neg-desc" className="input" style={{ maxWidth: 160 }} inputMode="decimal" value={String(n.descuentoMaxDivisa ?? 10)}
+          onChange={(e) => { const v = parseNum(e.target.value); setN({ ...n, descuentoMaxDivisa: v === null ? 0 : Math.max(0, Math.min(100, v)) }); }} />
+      </Campo>
+      <div className="muted small" style={{ marginTop: -6 }}>Tope del descuento que el vendedor puede escribir al cobrar, solo cuando todo se paga en efectivo $, Binance o USDT. 0 = sin descuento.</div>
       <Campo label="Prefijo de los códigos de producto (ej. RYG → RYG0001)">
         <input id="neg-prefijo" className="input" style={{ maxWidth: 160 }} value={n.prefijoCodigo ?? 'RYG'} maxLength={6}
           onChange={(e) => setN({ ...n, prefijoCodigo: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })} />
@@ -190,16 +197,68 @@ function EsteEquipo({ onCambio }: { onCambio: () => void }) {
       e.preventDefault();
       const c = caja.trim().toUpperCase();
       if (!/^C\d{1,2}$/.test(c)) { avisar('El código de caja debe ser C seguido de un número, ej. C2', true); return; }
+      const actual = (await getMeta<{ codigo: string } | null>(db, 'dispositivo', null))?.codigo;
+      if (c === actual) { avisar(`Este equipo ya es la caja ${c}`); return; }
       await accion(async () => {
-        const d = await getMeta<{ id: string; codigo: string; sedeId: string | null }>(db, 'dispositivo', { id: uuid(), codigo: 'C1', sedeId: ctx.sedeId });
-        await setMeta(db, 'dispositivo', { ...d, codigo: c });
+        if (MODO_NUBE) {
+          if (!navigator.onLine) throw new Error('Para cambiar el código de caja se necesita internet (hay que revisar que ningún otro equipo lo use).');
+          const otro = await codigoOcupado(ctx.sedeId, ctx.dispositivoId, c);
+          if (otro) throw new Error(`La caja ${c} la está usando otro equipo en este momento (último uso ${otro.ultimo_sync ? fechaHora(otro.ultimo_sync) : '—'}). Elige otro código.`);
+          // La numeración de tickets continúa desde el último ticket de ese código en la nube.
+          const ultimo = (await nube().rpc('ultimo_ticket', { p_sede: ctx.sedeId, p_prefijo: `${ctx.sedeCodigo}-${c}-` })).data as string | null;
+          const clave = `contador_ticket_${ctx.dispositivoId}`;
+          if (ultimo && Number(ultimo.split('-').pop()) > (await getMeta<number>(db, clave, 0))) await setMeta(db, clave, Number(ultimo.split('-').pop()));
+          await setMeta(db, `registro_en_${ctx.sedeId}`, 0); // se registra con el código nuevo en la próxima sincronización
+        }
+        if (!(await actualizarDispositivo(db, { codigo: c }))) await setMeta(db, 'dispositivo', { id: uuid(), codigo: c, sedeId: ctx.sedeId });
+        await setMeta(db, 'codigo_asignado', true);
         onCambio();
+        if (MODO_NUBE) await sincronizar(db, { ...ctx, dispositivoCodigo: c });
       }, `Este equipo ahora es la caja ${c}`);
     }}>
       <h2>Este equipo</h2>
-      <div className="muted small">Cada PC de venta debe tener un código distinto (C1, C2…). Va en el número de ticket: {ctx.sedeCodigo}-{caja || 'C1'}-000001. {MODO_NUBE ? 'Se asigna solo la primera vez que el equipo se conecta; cámbialo solo si hace falta, antes de la primera venta.' : 'Cámbialo antes de la primera venta.'}</div>
+      <div className="muted small">Cada PC de venta debe tener un código distinto (C1, C2…). Va en el número de ticket: {ctx.sedeCodigo}-{caja || 'C1'}-000001. {MODO_NUBE ? 'Se asigna solo la primera vez que el equipo se conecta y después no cambia solo. Si hace falta, cámbialo aquí (con internet).' : 'Cámbialo antes de la primera venta.'}</div>
       <div className="row"><Campo label="Código de caja"><input id="cod-caja" className="input" value={caja} onChange={(e) => setCaja(e.target.value)} /></Campo><button className="btn" type="submit">Guardar</button></div>
     </form>
+  );
+}
+
+function CajasSede() {
+  const { ctx } = useApp();
+  const accion = useAccion();
+  const [lista, setLista] = useState<EquipoNube[] | null>(null);
+  const [quitar, setQuitar] = useState<string | null>(null);
+  const cargar = () => accion(async () => setLista(await cajasDeSede(ctx.sedeId)));
+  return (
+    <section className="panel" style={{ maxWidth: 760 }}>
+      <h2>Cajas de esta sede</h2>
+      <div className="muted small">Equipos registrados en la nube con su código. Si quedó uno viejo (un PC reiniciado o de pruebas) ocupando un código, quítalo para liberarlo. Un equipo que ya tiene ventas no se puede quitar.</div>
+      <div><button className="btn" onClick={cargar}>{lista ? 'Actualizar lista' : 'Ver cajas'}</button></div>
+      {lista && (lista.length === 0 ? <div className="muted">No hay equipos registrados.</div> : (
+        <div className="table-wrap"><table>
+          <thead><tr><th>Código</th><th>Último uso</th><th>Versión</th><th>Estado</th><th></th></tr></thead>
+          <tbody>{lista.map((e) => {
+            const yo = e.id === ctx.dispositivoId;
+            const repetido = lista.some((o) => o.id !== e.id && o.codigo === e.codigo);
+            return (
+              <tr key={e.id}>
+                <td className="mono"><strong>{e.codigo}</strong></td>
+                <td className="small">{e.ultimo_sync ? fechaHora(e.ultimo_sync) : '—'}</td>
+                <td className="small">{e.version_app ?? ''}</td>
+                <td>{yo ? <span className="badge accent">Este equipo</span> : activo(e) ? <span className="badge good">En uso</span> : <span className="badge">Sin uso reciente</span>}
+                  {repetido && <span className="badge warn" style={{ marginLeft: 4 }}>Código repetido</span>}</td>
+                <td>{!yo && (quitar === e.id
+                  ? <span className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
+                      <button className="btn danger small" onClick={async () => { const r = await accion(() => quitarCaja(e.id), `Caja ${e.codigo} liberada`); setQuitar(null); if (r !== undefined) cargar(); }}>Sí, quitar</button>
+                      <button className="btn ghost small" onClick={() => setQuitar(null)}>No</button>
+                    </span>
+                  : <button className="btn ghost small" onClick={() => setQuitar(e.id)}>Quitar</button>)}</td>
+              </tr>
+            );
+          })}</tbody>
+        </table></div>
+      ))}
+    </section>
   );
 }
 

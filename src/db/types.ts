@@ -79,7 +79,7 @@ export interface VentaItem {
   total: number;
 }
 
-export type MedioPago = 'efectivo_usd' | 'efectivo_bs' | 'punto_venta' | 'biopago' | 'pago_movil' | 'binance';
+export type MedioPago = 'efectivo_usd' | 'efectivo_bs' | 'punto_venta' | 'biopago' | 'pago_movil' | 'binance' | 'usdt';
 export type Moneda = 'USD' | 'VES';
 
 /**
@@ -112,7 +112,8 @@ export interface Venta {
   clienteTelefono: string | null;
   items: VentaItem[];
   pagos: Pago[];
-  total: number;
+  total: number; // lo cobrado (ya con el descuento)
+  descuento?: number; // USD descontados por pagar en divisa (0 o sin valor = sin descuento)
   tasa: number | null; // tasa BCV usada en la venta
   totalBs: number | null;
   costoTotal: number;
@@ -202,6 +203,7 @@ export interface Negocio {
   telefono: string;
   mensajeTicket: string;
   prefijoCodigo?: string; // códigos propios de producto: RYG0001, RYG0002…
+  descuentoMaxDivisa?: number; // % máximo de descuento al pagar todo en divisa (sin valor = 10)
 }
 
 export interface Tasa {

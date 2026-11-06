@@ -7,6 +7,8 @@ import { MEDIOS, type TotalMedio } from '../../domain/pagos';
 import type { MedioPago } from '../../db/types';
 import { Campo, useAccion, useApp } from '../components/ui';
 import { leerEstado } from '../../sync/motor';
+import { MODO_NUBE } from '../../sync/nube';
+import { getMeta } from '../../db/db';
 
 export function Caja() {
   const { ctx, irA } = useApp();
@@ -24,6 +26,8 @@ export function Caja() {
   const [notas, setNotas] = useState('');
   const [confirmar, setConfirmar] = useState(false);
   const aviso = useLiveQuery(async () => (await leerEstado(db)).aviso ?? null, []);
+  // Un equipo nuevo no abre caja hasta recibir su código de la nube (evita tickets repetidos).
+  const registrado = useLiveQuery(async () => !MODO_NUBE || (await getMeta<boolean>(db, 'codigo_asignado', false)), []);
 
   if (sesion === undefined) return <div className="muted">Cargando…</div>;
 
@@ -37,7 +41,12 @@ export function Caja() {
     <>
       <h1>Caja {ctx.dispositivoCodigo}</h1>
       {aviso && <div className="alert bad">{aviso}</div>}
-      {!sesion ? (
+      {!sesion && registrado === false ? (
+        <div className="panel" style={{ maxWidth: 560 }}>
+          <h2>Conectando este equipo…</h2>
+          <div className="muted">La primera vez, el equipo recibe su código de caja (C1, C2…) desde la nube. Necesita internet; tarda unos segundos.</div>
+        </div>
+      ) : !sesion ? (
         <form className="panel" style={{ maxWidth: 560 }} onSubmit={async (e) => {
           e.preventDefault();
           const n = parseNum(base), nb = parseNum(baseBs) ?? 0;

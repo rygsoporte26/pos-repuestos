@@ -1,5 +1,37 @@
 # Cambios
 
+## 1.4.0 — 2026-11-04
+
+Descuento por pago en divisa y método USDT.
+
+- Al cobrar, si **todos** los pagos son en divisa (efectivo $, Binance o USDT), el vendedor puede escribir un descuento en % o en $. Con pago mixto en bolívares no aparece.
+- Tope: el % máximo lo fija el administrador en Ajustes → Datos del negocio (10% por defecto; 0 = sin descuento). La nube rechaza descuentos mayores o con pagos en bolívares.
+- Si hay un solo pago y no se tocó su monto, se ajusta solo al total con descuento.
+- El ticket muestra subtotal, descuento y total; la venta guarda el descuento; el Panel suma los descuentos del día; el respaldo CSV trae descuento y total de la venta.
+- Funciona igual en la caja de la tienda y en las ventas al mayor.
+- Nuevo método de pago **USDT** (en $, referencia obligatoria), aparte de Binance.
+- Migración 007: columna de descuento, método USDT y registrar_venta v5.
+
+## 1.3.3 — 2026-10-31
+
+Códigos de caja estables.
+
+- El código de caja se asigna solo la primera vez que el equipo se conecta (el primero libre) y después **nunca cambia solo**. Si se repite con otro equipo en uso, se muestra un aviso en Caja y en Ajustes.
+- Corrección: al entrar, la pantalla podía volver a escribir el código viejo encima del nuevo (por eso aparecían C6 y similares, o volvía a C1).
+- Un equipo nuevo se registra apenas entra y no deja abrir caja hasta tener su código.
+- Cambio manual en Ajustes → Este equipo: necesita internet, no deja usar un código que otro equipo está usando y continúa la numeración de tickets de ese código.
+- Nueva sección Ajustes → Cajas de esta sede: lista de equipos con su código y último uso, y botón Quitar para liberar el código de un equipo viejo.
+- "Reiniciar este equipo" libera su código en la nube.
+- Migración 006: permiso para quitar equipos (administrador y supervisor).
+
+## 1.3.2 — 2026-10-31
+
+Sincronización más rápida.
+
+- Las descargas de la nube se piden todas a la vez en lugar de una tras otra: con internet lento (250 ms por consulta) cada sincronización pasó de unos 7 s a cerca de 1 s.
+- El stock oficial (la consulta más pesada) se baja solo cuando hubo movimientos de inventario o cada 10 minutos; el registro del equipo se revisa al entrar y cada 2 minutos.
+- Se sincroniza cada 15 s (antes 30 s), al volver a la ventana del POS y menos de 1 s después de cada venta o cambio. Una venta de otro PC aparece en unos 15 s como máximo.
+
 ## 1.3.1 — 2026-10-31
 
 - Corrección: dos PCs de la misma sede podían quedar con el mismo código de caja (por ejemplo, los dos S1-C1) si entraban al mismo tiempo o después de limpiar la base. Ahora en cada sincronización se revisa y se cambia solo el equipo que todavía no ha vendido (si ninguno vendió, el más nuevo). Si los dos ya vendieron con el mismo código, se muestra un aviso en Caja y en Ajustes.

@@ -20,7 +20,29 @@ export const MEDIOS: InfoMedio[] = [
   { codigo: 'biopago', nombre: 'Biopago', corto: 'Bio', moneda: 'VES', referencia: true, efectivo: false, vuelto: false },
   { codigo: 'pago_movil', nombre: 'Pago móvil', corto: 'PM', moneda: 'VES', referencia: true, efectivo: false, vuelto: true },
   { codigo: 'binance', nombre: 'Binance', corto: 'Bin', moneda: 'USD', referencia: true, efectivo: false, vuelto: false },
+  { codigo: 'usdt', nombre: 'USDT', corto: 'USDT', moneda: 'USD', referencia: true, efectivo: false, vuelto: false },
 ];
+
+/** Métodos en divisa: los únicos que permiten descuento (efectivo $, Binance, USDT). */
+export const esDivisa = (m: MedioPago) => medio(m).moneda === 'USD';
+export const DESCUENTO_MAX_POR_DEFECTO = 10;
+
+/**
+ * Descuento por pagar en divisa: lo escribe el vendedor, hasta el % máximo que fija el
+ * administrador, y solo si TODOS los pagos son en divisa (sin pago mixto con bolívares).
+ */
+export function validarDescuento(subtotal: number, descuento: number | undefined, pagos: { medio: MedioPago; montoMoneda: number }[], maxPct: number): number {
+  const d = round2(descuento ?? 0);
+  if (d === 0) return 0;
+  if (!(d > 0)) throw new ErrorNegocio('El descuento no puede ser negativo');
+  const usados = pagos.filter((p) => p.montoMoneda > 0);
+  if (!usados.length || !usados.every((p) => esDivisa(p.medio))) {
+    throw new ErrorNegocio('El descuento solo se puede dar cuando todo se paga en divisa (efectivo $, Binance o USDT)');
+  }
+  const max = round2((subtotal * maxPct) / 100);
+  if (d > max) throw new ErrorNegocio(`El descuento máximo es ${maxPct}% (${max.toFixed(2).replace('.', ',')} $)`);
+  return d;
+}
 export const medio = (c: MedioPago): InfoMedio => MEDIOS.find((m) => m.codigo === c) ?? MEDIOS[1];
 
 /** Ventas de la versión 1.0 no tenían moneda ni tipo: eran efectivo en dólares. */

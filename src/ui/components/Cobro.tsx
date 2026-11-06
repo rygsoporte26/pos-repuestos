@@ -1,23 +1,36 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MedioPago, Tasa } from '../../db/types';
 import type { DatosCobro } from '../../domain/ventas';
-import { MEDIOS, aBs, aUsd, estadoCobro, medio, saldoEn, type EntradaPago, type EstadoCobro } from '../../domain/pagos';
-import { bs, num2, parseNum, usd } from '../../domain/util';
-import { Campo, Modal, useAccion } from './ui';
+import { DESCUENTO_MAX_POR_DEFECTO, MEDIOS, aBs, aUsd, esDivisa, estadoCobro, medio, saldoEn, type EntradaPago, type EstadoCobro } from '../../domain/pagos';
+import { bs, num2, parseNum, round2, usd } from '../../domain/util';
+import { Campo, Modal, useAccion, useApp } from './ui';
 
 const NOMBRE_VUELTO: Partial<Record<MedioPago, string>> = { efectivo_usd: 'Efectivo $', efectivo_bs: 'Efectivo Bs', pago_movil: 'Pago móvil' };
-type Fila = { id: number; medio: MedioPago; monto: string; referencia: string };
+type Fila = { id: number; medio: MedioPago; monto: string; referencia: string; auto: boolean };
+const txt = (n: number | null) => (n && n > 0 ? String(n).replace('.', ',') : '');
 
 /**
  * Cobro con uno o varios métodos (pago mixto), tasa BCV y vuelto a elección.
  * Lo usan la caja de la tienda y las ventas al mayor (que traen el cliente del pedido).
  */
-export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titulo = 'Cobrar', boton = 'Registrar venta' }: {
+export function Cobro({ total: subtotal, tasa, onClose, onCobrar, conCliente = true, titulo = 'Cobrar', boton = 'Registrar venta' }: {
   total: number; tasa: Tasa | null; onClose: () => void; onCobrar: (d: DatosCobro) => Promise<void>;
   conCliente?: boolean; titulo?: string; boton?: string;
 }) {
+  const { negocio } = useApp();
   const t = tasa?.valor ?? null;
   const [filas, setFilas] = useState<Fila[]>([]);
+  const [descTxt, setDescTxt] = useState('');
+  const [descTipo, setDescTipo] = useState<'%' | '$'>('%');
+  // Descuento por pagar en divisa: lo escribe el vendedor, hasta el tope del administrador,
+  // y solo si todos los pagos son en divisa (efectivo $, Binance, USDT).
+  const maxPct = negocio.descuentoMaxDivisa ?? DESCUENTO_MAX_POR_DEFECTO;
+  const todoDivisa = filas.length > 0 && filas.every((f) => esDivisa(f.medio));
+  const maxUsd = round2((subtotal * maxPct) / 100);
+  const nDesc = parseNum(descTxt);
+  const descuento = todoDivisa && nDesc !== null && nDesc > 0 ? round2(descTipo === '%' ? (subtotal * nDesc) / 100 : nDesc) : 0;
+  const descMalo = descuento > maxUsd + 0.001 || (nDesc !== null && nDesc < 0);
+  const total = descMalo ? subtotal : round2(subtotal - descuento);
   const [vuelto, setVuelto] = useState<MedioPago | null>(null);
   const [nombre, setNombre] = useState('');
   const [tel, setTel] = useState('');
@@ -31,11 +44,16 @@ export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titul
   const faltaRef = filas.find((f) => medio(f.medio).referencia && (parseNum(f.monto) ?? 0) > 0 && !f.referencia.trim());
   const vueltoElegido = vuelto ?? (filas.some((f) => f.medio === 'efectivo_usd') ? 'efectivo_usd' : 'efectivo_bs');
   const vueltoPosible = est.exceso === 0 || medio(vueltoElegido).moneda === 'USD' || !!t;
-  const ok = filas.length > 0 && est.falta === 0 && !faltaRef && vueltoPosible;
+  const ok = filas.length > 0 && est.falta === 0 && !faltaRef && vueltoPosible && !descMalo;
+
+  // Si hay un solo pago y nadie le tocó el monto, se ajusta solo al total con descuento.
+  useEffect(() => {
+    setFilas((fs) => (fs.length === 1 && fs[0].auto ? [{ ...fs[0], monto: txt(saldoEn(total, fs[0].medio, t)) }] : fs));
+  }, [total, t]);
 
   function agregar(m: MedioPago) {
     const monto = saldoEn(est.falta, m, t);
-    setFilas((fs) => [...fs, { id: sig.current++, medio: m, monto: monto && monto > 0 ? String(monto).replace('.', ',') : '', referencia: '' }]);
+    setFilas((fs) => [...fs, { id: sig.current++, medio: m, monto: txt(monto), referencia: '', auto: fs.length === 0 }]);
     setTimeout(() => document.getElementById(`monto-${sig.current - 1}`)?.focus(), 0);
   }
   const cambiar = (id: number, c: Partial<Fila>) => setFilas((fs) => fs.map((f) => (f.id === id ? { ...f, ...c } : f)));
@@ -44,7 +62,7 @@ export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titul
     e?.preventDefault();
     if (!ok || guardando) return;
     setGuardando(true);
-    await accion(() => onCobrar({ pagos: entradas, vuelto: est.exceso > 0 ? { medio: vueltoElegido } : undefined, tasa: t, clienteNombre: nombre, clienteTelefono: tel }));
+    await accion(() => onCobrar({ pagos: entradas, vuelto: est.exceso > 0 ? { medio: vueltoElegido } : undefined, tasa: t, descuento: descMalo ? 0 : descuento, clienteNombre: nombre, clienteTelefono: tel }));
     setGuardando(false);
   }
 
@@ -55,6 +73,7 @@ export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titul
           <span className="label">Total</span>
           <span style={{ textAlign: 'right' }}>
             <span className="amount">{usd(total)}</span>
+            {descuento > 0 && !descMalo && <div className="muted">Subtotal {usd(subtotal)} · descuento −{usd(descuento)}</div>}
             <div className="muted">{t ? `${bs(aBs(total, t))} · tasa ${num2(t)}` : 'Sin tasa BCV: solo se puede cobrar en $'}</div>
           </span>
         </div>
@@ -78,7 +97,7 @@ export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titul
               <strong className="pago-nombre">{m.nombre}</strong>
               <label className="field"><span>Monto en {m.moneda === 'USD' ? '$' : 'Bs'}</span>
                 <input id={`monto-${f.id}`} className={`input${n === null || n <= 0 ? ' invalid' : ''}`} inputMode="decimal" value={f.monto}
-                  onChange={(e) => cambiar(f.id, { monto: e.target.value })} onFocus={(e) => e.target.select()} />
+                  onChange={(e) => cambiar(f.id, { monto: e.target.value, auto: false })} onFocus={(e) => e.target.select()} />
               </label>
               {m.referencia && (
                 <label className="field"><span>Referencia</span>
@@ -91,6 +110,23 @@ export function Cobro({ total, tasa, onClose, onCobrar, conCliente = true, titul
             </div>
           );
         })}
+        {maxPct > 0 && todoDivisa && (
+          <div className="pago-fila" aria-label="Descuento por pago en divisa">
+            <span className="badge good">−</span>
+            <strong className="pago-nombre">Descuento por pago en divisa <span className="muted small">(máx. {maxPct}% = {usd(maxUsd)})</span></strong>
+            <label className="field"><span>Descuento</span>
+              <input id="descuento" className={`input${descMalo ? ' invalid' : ''}`} inputMode="decimal" value={descTxt} placeholder="0" onChange={(e) => setDescTxt(e.target.value)} />
+            </label>
+            <label className="field"><span>En</span>
+              <select id="descuento-tipo" className="input" value={descTipo} onChange={(e) => setDescTipo(e.target.value as '%' | '$')}><option value="%">%</option><option value="$">$</option></select>
+            </label>
+            <span className="num muted small">{descuento > 0 && !descMalo ? `−${usd(descuento)}` : ''}</span>
+          </div>
+        )}
+        {descMalo && <div className="alert bad">El descuento máximo por pago en divisa es {maxPct}% ({usd(maxUsd)}).</div>}
+        {maxPct > 0 && !todoDivisa && filas.length > 0 && filas.some((f) => esDivisa(f.medio)) && (
+          <div className="muted small">El descuento por pago en divisa solo aplica cuando todo se paga con efectivo $, Binance o USDT.</div>
+        )}
         {filas.length > 0 && est.falta > 0 && (
           <div className="alert warn">Falta <strong>{usd(est.falta)}</strong>{t ? <> ({bs(aBs(est.falta, t))})</> : null}. Agrega otro pago o corrige el monto.</div>
         )}

@@ -35,6 +35,7 @@ export function Panel() {
   const total = round2(ok.reduce((a, v) => a + v.total, 0));
   const costo = round2(ok.reduce((a, v) => a + v.costoTotal, 0));
   const utilidad = round2(total - costo);
+  const descuentos = round2(ok.reduce((a, v) => a + (v.descuento ?? 0), 0));
   const deCanal = (c: 'tienda' | 'mayor') => ok.filter((v) => (v.canal ?? 'tienda') === c);
   const tienda = round2(deCanal('tienda').reduce((a, v) => a + v.total, 0));
   const mayor = round2(deCanal('mayor').reduce((a, v) => a + v.total, 0));
@@ -66,7 +67,7 @@ export function Panel() {
         <Campo label="Día"><input id="dia-panel" type="date" className="input" value={dia} onChange={(e) => e.target.value && setDia(e.target.value)} /></Campo>
       </div>
       <div className="kpis">
-        <div className="kpi"><span className="label">Vendido</span><span className="v">{usd(total)}</span><span className="s">{ok.length} {ok.length === 1 ? "venta" : "ventas"}</span></div>
+        <div className="kpi"><span className="label">Vendido</span><span className="v">{usd(total)}</span><span className="s">{ok.length} {ok.length === 1 ? "venta" : "ventas"}{descuentos > 0 ? ` · descuentos ${usd(descuentos)}` : ''}</span></div>
         <div className="kpi"><span className="label">Tienda / Mayor</span><span className="v">{usd(tienda)}</span><span className="s">al mayor {usd(mayor)} ({deCanal('mayor').length})</span></div>
         <div className="kpi"><span className="label">Pedidos al mayor pendientes</span><span className="v">{pedidos.length}</span><span className="s">{usd(round2(pedidos.reduce((a, p) => a + p.total, 0)))} apartados</span></div>
         <div className="kpi"><span className="label">Utilidad bruta</span><span className="v">{usd(utilidad)}</span><span className="s">{total > 0 ? `${Math.round((utilidad / total) * 100)}% del vendido` : 'precio − costo'}</span></div>

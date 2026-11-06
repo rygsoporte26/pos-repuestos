@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, getMeta, setMeta } from './db/db';
+import { actualizarDispositivo, db, getMeta, setMeta } from './db/db';
 import { inicializar, inicializarNube, NEGOCIO_POR_DEFECTO } from './db/seed';
 import type { Negocio, Usuario } from './db/types';
 import { puede, type Accion, type Contexto } from './domain/contexto';
@@ -86,7 +86,7 @@ export function App() {
   // El PC pertenece a la sede de quien vende en él.
   useEffect(() => {
     if (datos?.dispositivo && u?.sedeId && datos.dispositivo.sedeId !== u.sedeId) {
-      void setMeta(db, 'dispositivo', { ...datos.dispositivo, sedeId: u.sedeId });
+      void actualizarDispositivo(db, { sedeId: u.sedeId }); // solo la sede: no pisa el código de caja
     }
   }, [datos?.dispositivo, u?.sedeId]);
 
@@ -102,6 +102,11 @@ export function App() {
     return arrancarSync(db, () => ctxRef.current ?? (u ? { usuario: u, sedeId: '', sedeCodigo: '', dispositivoId: datos?.dispositivo?.id ?? '', dispositivoCodigo: 'C1' } : null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activo, u?.id]);
+
+  // Apenas se conoce la sede (al entrar), se sincroniza: así el equipo recibe su código de caja de inmediato.
+  useEffect(() => {
+    if (activo && ctx?.sedeId) window.dispatchEvent(new Event('pos-outbox'));
+  }, [activo, ctx?.sedeId]);
 
   const irA = useCallback((p: Pagina) => setPagina(p), []);
   const salir = async () => {

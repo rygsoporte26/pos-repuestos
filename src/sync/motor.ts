@@ -1,11 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PosDB } from '../db/db';
-import { getMeta, setMeta } from '../db/db';
+import { actualizarDispositivo, getMeta, setMeta } from '../db/db';
 import type { Negocio, OutboxItem, PedidoMayor, Producto, Sede, SesionCaja, Tasa, Venta, Movimiento } from '../db/types';
 import { puede, type Contexto } from '../domain/contexto';
 import { stockKey } from '../domain/inventario';
 import { claveContadorMayor, prefijoMayor } from '../domain/mayor';
-import { decidirCodigo, type EquipoNube } from './codigoCaja';
+import { codigoInicial, otroConMismoCodigo, resolverEmpate, textoChoque, type EquipoNube } from './codigoCaja';
+import { fechaHora } from '../domain/util';
 import { nube, perfilAUsuario, type PerfilNube } from './nube';
 import {
   movimientoANube, movimientoDeNube, pedidoANube, pedidoDeNube, productoANube, productoDeNube, sesionANube, sesionDeNube, ventaANube, ventaDeNube,
@@ -54,10 +55,18 @@ export function sincronizar(d: PosDB, ctx: Contexto): Promise<void> {
       const sb = nube();
       const { data } = await sb.auth.getSession();
       if (!data.session) throw new ErrorRechazo('La sesión expiró: sal y vuelve a entrar');
-      if (ctx.sedeId && puede(ctx.usuario.rol, 'caja')) await registrarDispositivo(d, sb, ctx);
-      if (ctx.sedeId && puede(ctx.usuario.rol, 'mayor')) await contadorMayor(d, sb, ctx);
+      // El registro del equipo (código de caja y consecutivos) se revisa al entrar y luego cada 2 minutos.
+      const ultimoRegistro = await getMeta<number>(d, `registro_en_${ctx.sedeId}`, 0);
+      if (ctx.sedeId && Date.now() - ultimoRegistro > 2 * 60_000) {
+        await Promise.all([
+          puede(ctx.usuario.rol, 'caja') ? registrarDispositivo(d, sb, ctx) : null,
+          puede(ctx.usuario.rol, 'mayor') ? contadorMayor(d, sb, ctx) : null,
+        ]);
+        await setMeta(d, `registro_en_${ctx.sedeId}`, Date.now());
+      }
+      const subio = (await d.outbox.count()) > 0;
       await subir(d, sb);
-      await bajar(d, sb, ctx);
+      await bajar(d, sb, ctx, subio);
       await guardarEstado(d, { enCurso: false, ultimoOk: new Date().toISOString(), error: null, bloqueado: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -69,31 +78,36 @@ export function sincronizar(d: PosDB, ctx: Contexto): Promise<void> {
   return enCurso;
 }
 
+const listarEquipos = async (sb: SupabaseClient, sedeId: string) =>
+  revisar(await sb.from('dispositivos').select('id,codigo,creado_en,ultimo_sync,nombre,version_app').eq('sede_id', sedeId).order('codigo')) as EquipoNube[];
+
 async function registrarDispositivo(d: PosDB, sb: SupabaseClient, ctxIn: Contexto) {
-  let ctx = ctxIn;
-  // En cada sincronización se revisa que ningún otro PC de la sede tenga el mismo código de caja.
-  const equipos = revisar(await sb.from('dispositivos').select('id,codigo,creado_en').eq('sede_id', ctx.sedeId)) as EquipoNube[];
+  // El código vigente es el guardado en el equipo (pudo cambiarse a mano hace un momento).
+  const guardado = await getMeta<{ codigo: string } | null>(d, 'dispositivo', null);
+  let ctx = guardado?.codigo ? { ...ctxIn, dispositivoCodigo: guardado.codigo } : ctxIn;
   const asignado = await getMeta<boolean>(d, 'codigo_asignado', false);
-  const yoVendi = (await getMeta<number>(d, `contador_ticket_${ctx.dispositivoId}`, 0)) > 0
-    || (await getMeta<number>(d, claveContadorMayor(ctx), 0)) > 0;
-  const choque = equipos.find((e) => e.id !== ctx.dispositivoId && e.codigo === ctx.dispositivoCodigo);
-  let otroVendio = false;
-  if (choque && asignado) {
-    const r = revisar(await sb.from('ventas').select('id').eq('dispositivo_id', choque.id).limit(1)) as unknown[];
-    otroVendio = r.length > 0;
-  }
-  const dec = decidirCodigo({ miId: ctx.dispositivoId, miCodigo: ctx.dispositivoCodigo, asignado, equipos, yoVendi, otroVendio: () => otroVendio });
-  await guardarEstado(d, { aviso: dec.aviso });
-  if (dec.codigo !== ctx.dispositivoCodigo || !asignado) {
-    const disp = await getMeta<{ id: string; codigo: string; sedeId: string | null }>(d, 'dispositivo', { id: ctx.dispositivoId, codigo: dec.codigo, sedeId: ctx.sedeId });
-    await setMeta(d, 'dispositivo', { ...disp, codigo: dec.codigo });
-    await setMeta(d, 'codigo_asignado', true);
-    ctx = { ...ctx, dispositivoCodigo: dec.codigo };
-  }
-  revisar(await sb.from('dispositivos').upsert({
+  const subirFila = () => sb.from('dispositivos').upsert({
     id: ctx.dispositivoId, sede_id: ctx.sedeId, codigo: ctx.dispositivoCodigo, nombre: `Caja ${ctx.dispositivoCodigo}`,
     version_app: __APP_VERSION__, ultimo_sync: new Date().toISOString(),
-  }));
+  });
+  const usar = async (codigo: string) => {
+    await actualizarDispositivo(d, { codigo });
+    ctx = { ...ctx, dispositivoCodigo: codigo };
+  };
+  if (!asignado) {
+    // Primera vez de este PC: el primer código libre de la sede (C1, C2…).
+    await usar(codigoInicial(ctx.dispositivoId, ctx.dispositivoCodigo, await listarEquipos(sb, ctx.sedeId)));
+    revisar(await subirFila());
+    // Si otro PC nuevo tomó el mismo código en el mismo momento, se cambia el que llegó después.
+    const despues = resolverEmpate(ctx.dispositivoId, ctx.dispositivoCodigo, await listarEquipos(sb, ctx.sedeId));
+    if (despues !== ctx.dispositivoCodigo) { await usar(despues); revisar(await subirFila()); }
+    await setMeta(d, 'codigo_asignado', true);
+  } else {
+    // Después, el código no cambia solo: si se repite con otro equipo, se avisa.
+    revisar(await subirFila());
+  }
+  const otro = otroConMismoCodigo(ctx.dispositivoId, ctx.dispositivoCodigo, await listarEquipos(sb, ctx.sedeId));
+  await guardarEstado(d, { aviso: otro ? textoChoque(ctx.dispositivoCodigo, otro, fechaHora) : null });
   // Si el PC se reinstaló, el consecutivo de tickets continúa desde el último de la nube.
   const ultimo = revisar(await sb.rpc('ultimo_ticket', { p_sede: ctx.sedeId, p_prefijo: `${ctx.sedeCodigo}-${ctx.dispositivoCodigo}-` })) as string | null;
   if (ultimo) {
@@ -101,6 +115,25 @@ async function registrarDispositivo(d: PosDB, sb: SupabaseClient, ctxIn: Context
     const clave = `contador_ticket_${ctx.dispositivoId}`;
     if (nServ > (await getMeta<number>(d, clave, 0))) await setMeta(d, clave, nServ);
   }
+}
+
+/** Cajas (equipos) registradas en una sede, para revisarlas en Ajustes. */
+export const cajasDeSede = (sedeId: string) => listarEquipos(nube(), sedeId);
+
+/** Quita de la nube un equipo que ya no se usa (libera su código). No se puede si tiene ventas o cajas. */
+export async function quitarCaja(id: string): Promise<true> {
+  const { error, count } = await nube().from('dispositivos').delete({ count: 'exact' }).eq('id', id);
+  if (error) {
+    if (/foreign key|violates/i.test(error.message)) throw new Error('Ese equipo ya tiene ventas o cajas registradas: no se puede quitar. Cambia el código del otro equipo.');
+    throw new Error(`No se pudo quitar: ${error.message}`);
+  }
+  if (!count) throw new Error('No se pudo quitar (¿falta correr 006_cajas.sql en Supabase?)');
+  return true;
+}
+
+/** ¿Otro equipo de la sede usa este código en este momento? (para validar el cambio manual) */
+export async function codigoOcupado(sedeId: string, miId: string, codigo: string): Promise<EquipoNube | null> {
+  return otroConMismoCodigo(miId, codigo, await listarEquipos(nube(), sedeId)) ?? null;
 }
 
 /** El consecutivo de ventas y pedidos al mayor continúa desde el último que tenga la nube. */
@@ -204,52 +237,58 @@ async function paginado(sb: SupabaseClient, tabla: string, select: string, col: 
 const maxFecha = (filas: Record<string, unknown>[], col: string, previo: string | null) =>
   filas.reduce<string | null>((m, f) => (!m || (f[col] as string) > m ? (f[col] as string) : m), previo);
 
-async function bajar(d: PosDB, sb: SupabaseClient, ctx: Contexto) {
+async function bajar(d: PosDB, sb: SupabaseClient, ctx: Contexto, subio: boolean) {
   const pendientesIds = new Set((await d.outbox.toArray()).map((x) => x.refId));
+  const [cP, cV, cS, cPe, cM] = await Promise.all([
+    cursor(d, 'productos'), cursor(d, 'ventas'), cursor(d, 'sesiones'), cursor(d, 'pedidos', true), cursor(d, 'movimientos'),
+  ]);
+
+  // Todo se pide a la vez (una sola espera de red en vez de ocho seguidas) y luego se guarda en orden.
+  const [sedes, perfiles, conf, prods, ventas, sesiones, pedidos, movs] = await Promise.all([
+    sb.from('sedes').select('id,codigo,nombre').then((r) => revisar(r) as Sede[]),
+    sb.from('perfiles').select('id,nombre,rol,sede_id,activo,email').then((r) => revisar(r) as PerfilNube[]),
+    sb.from('config').select('clave,valor').in('clave', ['negocio', 'tasa']).then((r) => revisar(r) as { clave: string; valor: unknown }[]),
+    paginado(sb, 'productos', '*', 'actualizado_en', cP),
+    paginado(sb, 'ventas', '*,venta_items(*),pagos(*)', 'actualizado_en', cV),
+    paginado(sb, 'sesiones_caja', '*', 'actualizado_en', cS),
+    paginado(sb, 'pedidos_mayor', '*', 'actualizado_en', cPe), // pocos: todos desde siempre, para no perder un apartado viejo
+    paginado(sb, 'movimientos_inventario', '*', 'recibido_en', cM),
+  ]);
 
   // Sedes, usuarios y datos del negocio (pocos registros: se bajan completos).
-  const sedes = revisar(await sb.from('sedes').select('id,codigo,nombre')) as Sede[];
   await d.sedes.bulkPut(sedes);
-  const perfiles = revisar(await sb.from('perfiles').select('id,nombre,rol,sede_id,activo,email')) as PerfilNube[];
   await d.usuarios.bulkPut(perfiles.map(perfilAUsuario));
-  const conf = revisar(await sb.from('config').select('clave,valor').in('clave', ['negocio', 'tasa'])) as { clave: string; valor: unknown }[];
   for (const c of conf) {
     if (c.clave === 'negocio') await setMeta(d, 'negocio', c.valor as Negocio);
     if (c.clave === 'tasa' && !pendientesIds.has('tasa')) await setMeta(d, 'tasa', c.valor as Tasa);
   }
-
-  // Productos cambiados.
-  const prods = await paginado(sb, 'productos', '*', 'actualizado_en', await cursor(d, 'productos'));
   if (prods.length) {
     await d.productos.bulkPut(prods.filter((r) => !pendientesIds.has(r.id as string)).map(productoDeNube));
     await setMeta(d, 'cursor_productos', maxFecha(prods, 'actualizado_en', null));
   }
-
-  // Ventas, cajas y movimientos (de las sedes que el usuario puede ver).
   const codigos = new Map((await d.productos.toArray()).map((p) => [p.id, p.codigo]));
-  const ventas = await paginado(sb, 'ventas', '*,venta_items(*),pagos(*)', 'actualizado_en', await cursor(d, 'ventas'));
   if (ventas.length) {
     await d.ventas.bulkPut(ventas.filter((r) => !pendientesIds.has(r.id as string)).map((r) => ventaDeNube(r, codigos)));
     await setMeta(d, 'cursor_ventas', maxFecha(ventas, 'actualizado_en', null));
   }
-  const sesiones = await paginado(sb, 'sesiones_caja', '*', 'actualizado_en', await cursor(d, 'sesiones'));
   if (sesiones.length) {
     await d.sesiones.bulkPut(sesiones.filter((r) => !pendientesIds.has(r.id as string)).map(sesionDeNube));
     await setMeta(d, 'cursor_sesiones', maxFecha(sesiones, 'actualizado_en', null));
   }
-  const pedidos = await paginado(sb, 'pedidos_mayor', '*', 'actualizado_en', await cursor(d, 'pedidos', true)); // pocos: todos, para no perder un apartado viejo
   if (pedidos.length) {
     await d.pedidos.bulkPut(pedidos.filter((r) => !pendientesIds.has(r.id as string)).map(pedidoDeNube));
     await setMeta(d, 'cursor_pedidos', maxFecha(pedidos, 'actualizado_en', null));
   }
-  const movs = await paginado(sb, 'movimientos_inventario', '*', 'recibido_en', await cursor(d, 'movimientos'));
   if (movs.length) {
     await d.movimientos.bulkPut(movs.map(movimientoDeNube));
     await setMeta(d, 'cursor_movimientos', maxFecha(movs, 'recibido_en', null));
   }
 
-  // Stock oficial: solo si no quedan cambios locales sin subir (si no, se perderían).
-  if ((await d.outbox.count()) === 0) {
+  // Stock oficial: solo si no quedan cambios locales sin subir (si no, se perderían), y solo
+  // cuando algo movió el inventario (o cada 10 minutos por seguridad): es la consulta más pesada.
+  const ultimoStock = await getMeta<number>(d, 'stock_bajado_en', 0);
+  const toca = subio || movs.length > 0 || Date.now() - ultimoStock > 10 * 60_000;
+  if (toca && (await d.outbox.count()) === 0) {
     const stock = [] as { sede_id: string; producto_id: string; stock: number }[];
     for (let i = 0; ; i += 1000) {
       const f = revisar(await sb.from('stock_actual').select('sede_id,producto_id,stock').order('producto_id').order('sede_id').range(i, i + 999)) as typeof stock;
@@ -260,26 +299,30 @@ async function bajar(d: PosDB, sb: SupabaseClient, ctx: Contexto) {
       await d.stock.clear();
       await d.stock.bulkPut(stock.map((s) => ({ key: stockKey(s.sede_id, s.producto_id), sedeId: s.sede_id, productoId: s.producto_id, stock: Number(s.stock) })));
     });
+    await setMeta(d, 'stock_bajado_en', Date.now());
   }
   void ctx;
 }
 
 // ---------------------------------------------------------------- PROGRAMACIÓN
 /**
- * Sincroniza al abrir, cada 30 s, al volver internet y poco después de cada venta o
- * cambio. Devuelve una función para detenerlo (al cerrar sesión).
+ * Sincroniza al abrir, cada 15 s, al volver internet o a la ventana y poco después de cada
+ * venta o cambio. Devuelve una función para detenerlo (al cerrar sesión).
  */
 export function arrancarSync(d: PosDB, ctx: () => Contexto | null): () => void {
   let t: ReturnType<typeof setTimeout> | null = null;
   const correr = () => { const c = ctx(); if (c) void sincronizar(d, c); };
-  const pronto = () => { if (t) clearTimeout(t); t = setTimeout(correr, 1500); };
+  const pronto = () => { if (t) clearTimeout(t); t = setTimeout(correr, 800); };
   correr();
-  const iv = setInterval(correr, 30_000);
+  const iv = setInterval(correr, 15_000);
+  const alVolver = () => { if (document.visibilityState === 'visible') correr(); };
   window.addEventListener('online', correr);
+  document.addEventListener('visibilitychange', alVolver);
   window.addEventListener('pos-outbox', pronto);
   return () => {
     clearInterval(iv); if (t) clearTimeout(t);
     window.removeEventListener('online', correr);
+    document.removeEventListener('visibilitychange', alVolver);
     window.removeEventListener('pos-outbox', pronto);
   };
 }
@@ -308,6 +351,9 @@ export async function rebajarTodo(d: PosDB, ctx: Contexto) {
 export async function reiniciarEquipo(d: PosDB) {
   const pendientes = await d.outbox.count();
   if (pendientes > 0) throw new Error(`Hay ${pendientes} cambios de este equipo sin subir a la nube. Sincroniza primero (necesita internet).`);
+  // Libera su código de caja en la nube (si no tiene ventas); si falla, no importa.
+  const disp = await getMeta<{ id: string } | null>(d, 'dispositivo', null);
+  if (disp && navigator.onLine) { try { await nube().from('dispositivos').delete().eq('id', disp.id); } catch { /* sigue */ } }
   d.close();
   await d.delete();
   location.reload();

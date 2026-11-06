@@ -28,6 +28,12 @@ export function Ticket({ venta, negocio }: { venta: Venta; negocio: Negocio }) {
         </div>
       ))}
       <hr />
+      {venta.descuento ? (
+        <>
+          <div className="l"><span>Subtotal</span><span>{num2(venta.total + venta.descuento)}</span></div>
+          <div className="l"><span>Descuento pago en divisa</span><span>-{num2(venta.descuento)}</span></div>
+        </>
+      ) : null}
       <div className="l big"><span>TOTAL USD</span><span>{num2(venta.total)}</span></div>
       {venta.totalBs !== null && venta.totalBs !== undefined && <div className="l"><span>TOTAL Bs</span><span>{num2(venta.totalBs)}</span></div>}
       {venta.tasa ? <div className="l"><span>Tasa BCV</span><span>{num2(venta.tasa)}</span></div> : null}
